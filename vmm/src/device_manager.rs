@@ -1148,6 +1148,12 @@ impl DeviceManager {
         &self.id_to_dev_info
     }
 
+    fn add_vtpm_device(
+        &mut self,
+    ) -> DeviceManagerResult<()> {
+        Ok(())
+    }
+
     #[allow(unused_variables)]
     fn add_pci_devices(
         &mut self,
@@ -1554,10 +1560,7 @@ impl DeviceManager {
         self.bus_devices
             .push(Arc::clone(&serial) as Arc<Mutex<dyn BusDevice>>);
 
-        self.address_manager
-            .allocator
-            .lock()
-            .unwrap()
+        self.address_manager.allocator.lock().unwrap()
             .allocate_io_addresses(Some(GuestAddress(0x3f8)), 0x8, None)
             .ok_or(DeviceManagerError::AllocateIoPort)?;
 
