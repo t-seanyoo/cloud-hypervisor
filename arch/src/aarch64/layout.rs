@@ -72,6 +72,10 @@ pub const MEM_32BIT_DEVICES_SIZE: u64 = 0x2000_0000;
 pub const PCI_MMCONFIG_START: GuestAddress = GuestAddress(0x3000_0000);
 pub const PCI_MMCONFIG_SIZE: u64 = 256 << 20;
 
+/// VTPM space: GET CORRECT SPACE AREA
+pub const VTPM_START: GuestAddress = GuestAddress(0xFED40000);
+pub const VTPM_SIZE: u64 = 0x5000;
+
 /// Start of RAM on 64 bit ARM.
 pub const RAM_64BIT_START: u64 = 0x4000_0000;
 

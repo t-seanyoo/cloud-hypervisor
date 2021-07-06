@@ -1839,7 +1839,7 @@ impl Aml for MemoryManager {
                     &aml::OpRegion::new(
                         "MHPR".into(),
                         aml::OpRegionSpace::SystemMemory,
-                        self.acpi_address.0 as usize,
+                        &(self.acpi_address.0 as usize),
                         MEMORY_MANAGER_ACPI_SIZE,
                     ),
                     &aml::Field::new(

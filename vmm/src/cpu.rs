@@ -1570,7 +1570,7 @@ impl Aml for CpuManager {
                     &aml::OpRegion::new(
                         "PRST".into(),
                         aml::OpRegionSpace::SystemMemory,
-                        self.acpi_address.0 as usize,
+                        &(self.acpi_address.0 as usize),
                         CPU_MANAGER_ACPI_SIZE,
                     ),
                     &aml::Field::new(

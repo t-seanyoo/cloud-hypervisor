@@ -347,6 +347,13 @@ fn create_app<'a, 'b>(
                 .takes_value(true)
                 .possible_values(&["true", "false", "log"])
                 .default_value("true"),
+        )
+        .arg(
+            Arg::with_name("vtpm")
+                .long("vtpm")
+                .takes_value(true)
+                .possible_values(&["true", "false"])
+                .default_value("false"),
         );
 
     #[cfg(target_arch = "x86_64")]
@@ -382,6 +389,16 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
         2 => LevelFilter::Debug,
         _ => LevelFilter::Trace,
     };
+
+    // Print for vtpm parameter: vTPM enabled by default
+    if let Some(vtpm_enabled) = cmd_arguments.value_of("vtpm") {
+        eprintln!("vTPM enabled by default");
+        // match vtpm_enabled {
+        //     "true" => eprintln!("vTPM is enabled"),
+        //     "false" => eprintln!("vTPM is not enabled"),
+        //     _ => eprintln!("Invalid vtpm_enabled")
+        // }
+    }
 
     let log_file: Box<dyn std::io::Write + Send> = if let Some(file) =
         cmd_arguments.value_of("log-file")

@@ -965,6 +965,7 @@ impl DeviceManager {
             .ok_or(DeviceManagerError::AllocateIoPort)?;
         let device_manager = DeviceManager {
             address_manager: Arc::clone(&address_manager),
+            // vtpm: None,
             console: Arc::new(Console::default()),
             interrupt_controller: None,
             cmdline_additions: Vec::new(),
@@ -1063,6 +1064,8 @@ impl DeviceManager {
                 .map_err(DeviceManagerError::BusError)?;
         }
 
+        
+
         #[cfg(target_arch = "x86_64")]
         self.add_legacy_devices(
             self.reset_evt
@@ -1092,6 +1095,11 @@ impl DeviceManager {
             serial_pty,
             console_pty,
         )?;
+
+        let vtpm = self.add_vtpm_device(
+            &legacy_interrupt_manager
+        )?;
+        self.bus_devices.push(Arc::clone(&vtpm) as Arc<Mutex<dyn BusDevice>>);
 
         // Reserve some IRQs for PCI devices in case they need to support INTx.
         self.reserve_legacy_interrupts_for_pci_devices()?;
@@ -1147,6 +1155,7 @@ impl DeviceManager {
     pub fn get_device_info(&self) -> &HashMap<(DeviceType, String), MmioDeviceInfo> {
         &self.id_to_dev_info
     }
+
 
     #[allow(unused_variables)]
     fn add_pci_devices(
@@ -1554,10 +1563,7 @@ impl DeviceManager {
         self.bus_devices
             .push(Arc::clone(&serial) as Arc<Mutex<dyn BusDevice>>);
 
-        self.address_manager
-            .allocator
-            .lock()
-            .unwrap()
+        self.address_manager.allocator.lock().unwrap()
             .allocate_io_addresses(Some(GuestAddress(0x3f8)), 0x8, None)
             .ok_or(DeviceManagerError::AllocateIoPort)?;
 
@@ -1575,6 +1581,41 @@ impl DeviceManager {
             .insert(id.clone(), device_node!(id, serial));
 
         Ok(serial)
+    }
+
+    fn add_vtpm_device(
+        &mut self,
+        // serial_writer: Option<Box<dyn io::Write + Send>>,
+        interrupt_manager: &Arc<dyn InterruptManager<GroupConfig = LegacyIrqGroupConfig>>,
+    ) -> DeviceManagerResult<Arc<Mutex<devices::tpm_tis::TPMIsa>>> {
+
+        let irq_num = self
+            .address_manager
+            .allocator
+            .lock()
+            .unwrap()
+            .allocate_irq()
+            .unwrap();
+
+        let interrupt_group = interrupt_manager
+            .create_group(LegacyIrqGroupConfig {
+                irq: irq_num as InterruptIndex,
+            })
+            .map_err(DeviceManagerError::CreateInterruptGroup)?;
+
+        // Must Create VTPM Device...
+        let vtpm = Arc::new(Mutex::new(devices::tpm_tis::TPMIsa::new(
+            interrupt_group,
+            irq_num as InterruptIndex,
+        )));
+
+        // Add VTPM Device to mmio
+        self.address_manager
+            .mmio_bus
+            .insert(vtpm.clone(), arch::layout::VTPM_START.0, arch::layout::VTPM_SIZE)
+            .map_err(DeviceManagerError::BusError)?;
+
+        Ok(vtpm)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -3685,7 +3726,7 @@ impl Aml for PciDsmMethod {
                             vec![&aml::Return::new(&aml::Buffer::new(vec![0x21]))],
                         ),
                         &aml::If::new(
-                            &aml::Equal::new(&aml::Arg(2), &0x05u8),
+                            &aml::Equal::new(&aml::Arg(2), &(0x05 as usize)),
                             vec![&aml::Return::new(&aml::ZERO)],
                         ),
                     ],
@@ -3694,6 +3735,30 @@ impl Aml for PciDsmMethod {
             ],
         )
         .to_aml_bytes()
+    }
+}
+
+#[cfg(feature = "acpi")]
+struct VTPMDevice {}
+
+#[cfg(feature = "acpi")]
+impl Aml for VTPMDevice {
+    fn to_aml_bytes(&self) -> Vec<u8> {
+        aml::Device::new(
+            "TPM2".into(),
+            vec![
+                &aml::Name::new("_HID".into(), &"MSFT0101"),
+                &aml::Name::new("_STA".into(), &(0xF as usize)),
+                &aml::Name::new(
+                    "_CRS".into(),
+                    &aml::ResourceTemplate::new(vec![&aml::Memory32Fixed::new(
+                        true,
+                        layout::VTPM_START.0 as u32,
+                        layout::VTPM_SIZE as u32,
+                    )]),
+                 ),
+            ]
+        ).to_aml_bytes()
     }
 }
 
@@ -3726,7 +3791,7 @@ impl Aml for DeviceManager {
                     &aml::OpRegion::new(
                         "PCST".into(),
                         aml::OpRegionSpace::SystemMemory,
-                        self.acpi_address.0 as usize,
+                        &(self.acpi_address.0 as usize),
                         DEVICE_MANAGER_ACPI_SIZE,
                     ),
                     &aml::Field::new(
@@ -3815,6 +3880,12 @@ impl Aml for DeviceManager {
                 &aml::AddressSpace::new_io(0u16, 0x0cf7u16),
                 #[cfg(target_arch = "x86_64")]
                 &aml::AddressSpace::new_io(0x0d00u16, 0xffffu16),
+                //VTPM RESOURCE SPACE
+                // &aml::Memory32Fixed::new(
+                //     true,
+                //     layout::VTPM_START.0 as u32,
+                //     layout::VTPM_SIZE as u32,
+                // ),
             ]),
         );
         pci_dsdt_inner_data.push(&crs);
@@ -3824,6 +3895,7 @@ impl Aml for DeviceManager {
             let pci_device = PciDevSlot { device_id };
             pci_devices.push(pci_device);
         }
+
         for pci_device in pci_devices.iter() {
             pci_dsdt_inner_data.push(pci_device);
         }
@@ -3924,6 +3996,21 @@ impl Aml for DeviceManager {
             ],
         )
         .to_aml_bytes();
+
+
+        // // Add vtpm device:
+        let vtpm_acpi = VTPMDevice {};
+        let vtpm_dsdt_data = vtpm_acpi.to_aml_bytes();
+        bytes.extend_from_slice(vtpm_dsdt_data.as_slice());
+
+        //MANUAL 
+        // let mut vtpm_acpi = Vec::<u8>::new();
+        
+        // vtpm_acpi.extend(b"TPM2");
+        // vtpm_acpi.extend();
+        // bytes.extend_from_slice(vtpm_acpi.as_slice());
+
+        
 
         let ged_data = self
             .ged_notification_device

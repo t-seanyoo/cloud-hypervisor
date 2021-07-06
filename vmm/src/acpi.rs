@@ -14,6 +14,10 @@ use arch::aarch64::DeviceInfoForFdt;
 #[cfg(target_arch = "aarch64")]
 use arch::DeviceType;
 
+// Output dsdt table 
+use std::fs::File;
+use std::io::Write;
+
 use bitflags::bitflags;
 use std::sync::{Arc, Mutex};
 use vm_memory::{Address, ByteValued, Bytes, GuestAddress, GuestMemoryRegion};
@@ -152,6 +156,7 @@ struct ViotPciRangeNode {
     _reserved2: [u8; 6],
 }
 
+
 pub fn create_dsdt_table(
     device_manager: &Arc<Mutex<DeviceManager>>,
     cpu_manager: &Arc<Mutex<CpuManager>>,
@@ -224,6 +229,19 @@ fn create_mcfg_table() -> Sdt {
         ..Default::default()
     });
     mcfg
+}
+
+fn create_tpm2_table() -> Sdt {
+    let mut tpm = Sdt::new(*b"TPM2", 52, 3, *b"CLOUDH", *b"CHTPM2  ", 1);
+
+    tpm.write(36, 0 as u16); //Platform Class
+    tpm.write(38, 0 as u16); // Reserved Space
+    tpm.write(40, 4275306496 as u64); // Address of Control Area
+    tpm.write(48, 6 as u32); //Start Method
+
+    tpm.update_checksum();
+
+    tpm
 }
 
 fn create_srat_table(numa_nodes: &NumaNodes) -> Sdt {
@@ -463,6 +481,12 @@ pub fn create_acpi_tables(
 
     // DSDT
     let dsdt = create_dsdt_table(device_manager, cpu_manager, memory_manager);
+
+    // TEST OUTPUT ACPI TABLE
+    let dsdt_data = dsdt.as_slice();
+    let mut f = File::create("/home/test/fileshare/fileshare/output2").expect("Unable to create file");
+    // f.write_all(dsdt_data).expect("Unable to write data");
+
     let dsdt_offset = rsdp_offset.checked_add(Rsdp::len() as u64).unwrap();
     guest_mem
         .write_slice(dsdt.as_slice(), dsdt_offset)
@@ -543,6 +567,19 @@ pub fn create_acpi_tables(
         prev_tbl_off = spcr_offset;
     }
 
+    // TPM2 Table
+    let tpm2 = create_tpm2_table();
+    let tpm2_offset = prev_tbl_off.checked_add(prev_tbl_len as u64).unwrap();
+    guest_mem
+        .write_slice(tpm2.as_slice(), tpm2_offset)
+        .expect("Error writing TPM2 table");
+    tables.push(tpm2_offset.0);
+
+    f.write_all(tpm2.as_slice()).expect("Unable to write data");
+
+    prev_tbl_len = tpm2.len() as u64;
+    prev_tbl_off = tpm2_offset;
+
     // SRAT and SLIT
     // Only created if the NUMA nodes list is not empty.
     if !numa_nodes.is_empty() {
@@ -597,6 +634,9 @@ pub fn create_acpi_tables(
     for table in tables {
         xsdt.append(table);
     }
+
+    // xsdt.append(tpm2);
+
     xsdt.update_checksum();
     let xsdt_offset = prev_tbl_off.checked_add(prev_tbl_len).unwrap();
     guest_mem
