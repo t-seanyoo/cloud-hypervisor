@@ -347,6 +347,13 @@ fn create_app<'a, 'b>(
                 .takes_value(true)
                 .possible_values(&["true", "false", "log"])
                 .default_value("true"),
+        )
+        .arg(
+            Arg::with_name("vtpm")
+                .long("vtpm")
+                .takes_value(true)
+                .possible_values(&["true", "false"])
+                .default_value("false"),
         );
 
     #[cfg(target_arch = "x86_64")]
