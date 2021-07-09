@@ -890,6 +890,26 @@ impl<'a> Aml for LessThan<'a> {
     }
 }
 
+pub struct GreaterThanEqual<'a> {
+    left: &'a dyn Aml,
+    right: &'a dyn Aml,
+}
+
+impl<'a> GreaterThanEqual<'a> {
+    pub fn new(left: &'a dyn Aml, right: &'a dyn Aml) -> Self {
+        GreaterThanEqual { left, right }
+    }
+}
+
+impl<'a> Aml for GreaterThanEqual<'a> {
+    fn to_aml_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![0x92, 0x95]; /* LLessOp */
+        bytes.extend_from_slice(&self.left.to_aml_bytes());
+        bytes.extend_from_slice(&self.right.to_aml_bytes());
+        bytes
+    }
+}
+
 pub struct Arg(pub u8);
 
 impl Aml for Arg {
