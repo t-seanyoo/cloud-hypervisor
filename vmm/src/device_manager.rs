@@ -1148,11 +1148,13 @@ impl DeviceManager {
         &self.id_to_dev_info
     }
 
-    fn add_vtpm_device(
-        &mut self,
-    ) -> DeviceManagerResult<()> {
-        Ok(())
-    }
+    // fn add_vtpm_device(
+    //     &mut self,
+    // ) -> DeviceManagerResult<()> {
+
+    //     // Memory Mapped IO + Handlers
+    //     Ok(())
+    // }
 
     #[allow(unused_variables)]
     fn add_pci_devices(
@@ -3688,12 +3690,99 @@ impl Aml for PciDsmMethod {
                             vec![&aml::Return::new(&aml::Buffer::new(vec![0x21]))],
                         ),
                         &aml::If::new(
-                            &aml::Equal::new(&aml::Arg(2), &0x05u8),
+                            &aml::Equal::new(&aml::Arg(2), &(0x05 as usize)),
                             vec![&aml::Return::new(&aml::ZERO)],
                         ),
                     ],
                 ),
                 &aml::Return::new(&aml::Buffer::new(vec![0])),
+            ],
+        )
+        .to_aml_bytes()
+    }
+}
+
+#[cfg(feature = "acpi")]
+struct VTPMDevice {
+    tpm_ppi_addr_base: usize,
+}
+
+#[cfg(feature = "acpi")]
+impl Aml for VTPMDevice {
+    fn to_aml_bytes(&self) -> Vec<u8> {
+        aml::Device::new(
+            "TPM".into(),
+            vec![
+                &aml::Name::new("_HID".into(), &"MSFT0101"),
+                &aml::Name::new("_STA".into(), &(0xF as usize)),
+                &aml::Name::new(
+                    "_CRS".into(),
+                    &aml::ResourceTemplate::new(vec![&aml::Memory32Fixed::new(
+                        true,
+                        layout::VTPM_START.0 as u32,
+                        layout::VTPM_SIZE as u32,
+                    )]),
+                ),
+                &aml::OpRegion::new(
+                    "TPP2".into(),
+                    aml::OpRegionSpace::SystemMemory,
+                    self.tpm_ppi_addr_base + (0x100 as usize),
+                    0x5A as usize,
+                ),
+                &aml::Field::new(
+                    "TPP2".into(),
+                    aml::FieldAccessType::Any,
+                    aml::FieldUpdateRule::Preserve,
+                    vec![
+                        aml::FieldEntry::Named(*b"PPIN", 8),
+                        aml::FieldEntry::Named(*b"PPIP", 32),
+                        aml::FieldEntry::Named(*b"PPRP", 32),
+                        aml::FieldEntry::Named(*b"PPRQ", 32),
+                        aml::FieldEntry::Named(*b"PPRM", 32),
+                        aml::FieldEntry::Named(*b"LPPR", 32),
+                    ],
+                ),
+                &aml::OpRegion::new(
+                    "TPP3".into(),
+                    aml::OpRegionSpace::SystemMemory,
+                    self.tpm_ppi_addr_base + (0x15a as usize),
+                    0x1 as usize,
+                ),
+                &aml::Field::new(
+                    "TPP3".into(),
+                    aml::FieldAccessType::Any,
+                    aml::FieldUpdateRule::Preserve,
+                    vec![
+                        aml::FieldEntry::Named(*b"MOVV", 8),
+                    ],
+                ),
+                &aml::Method::new(
+                    "TPFN".into(),
+                    1,
+                    true,
+                    vec![
+                        &aml::If::new(
+                            &aml::GreaterThanEqual::new(&aml::Arg(0), &(0x100 as usize)),
+                            vec![&aml::Return::new(&aml::ZERO)],
+                        ),
+                        // &aml::OpRegion::new(
+                        //     "TPP1".into(),
+                        //     aml::OpRegionSpace::SystemMemory,
+                        //     &aml::Add::new(self.tpm_ppi_addr_base, (&aml::Arg(0)), None), //OP REGION MUST BE UPDATED IN AML.RS
+                        //     0x1 as usize,
+                        // ),
+                    ],
+                ),
+                &aml::Name::new("TPM2".into(), &aml::Package::new(vec![&aml::ZERO, &aml::ZERO])),
+                &aml::Name::new("TPM3".into(), &aml::Package::new(vec![&aml::ZERO, &aml::ZERO, &aml::ZERO])),
+                &aml::Method::new(
+                    "_DSM".into(),
+                    4,
+                    true,
+                    vec![
+                        // Fill out PPI Method
+                    ],
+                ),
             ],
         )
         .to_aml_bytes()
@@ -3827,6 +3916,7 @@ impl Aml for DeviceManager {
             let pci_device = PciDevSlot { device_id };
             pci_devices.push(pci_device);
         }
+
         for pci_device in pci_devices.iter() {
             pci_dsdt_inner_data.push(pci_device);
         }
@@ -3851,6 +3941,35 @@ impl Aml for DeviceManager {
             .collect();
         let prt = aml::Name::new("_PRT".into(), &aml::Package::new(prt_package_list));
         pci_dsdt_inner_data.push(&prt);
+
+        // Add vTPM Device to PCI devices list
+        // if (vtpm_enabled) {
+        //     // Add to pci_dsdt_inner_data so that it can be added to PCI0 scope
+        //     // Create aml Device with title "TPM" as namestring
+        //     // Name buffer byte array: "TPM", 
+        // }
+
+        //_CRS: Resource template
+        
+        // let mut vtpm_device_data: Vec<&dyn aml::Aml> = Vec::new();
+        // let hid = aml::Name::new("_HID".into(), &"PNP0A08");
+        // vtpm_device_data.push(&hid);
+        // let sta = aml::Name::new("_STA".into(), &0xFu8);
+        // vtpm_device_data.push(&sta);
+        // let crs = &aml::Name::new(
+        //     "_CRS".into(),
+        //     &aml::ResourceTemplate::new(vec![&aml::Memory32Fixed::new(
+        //         true,
+        //         layout::VTPM_START.0 as u32,
+        //         layout::VTPM_SIZE as u32,
+        //     )]),
+        // );
+        // vtpm_device_data.push(&crs);
+        
+
+        // let vtpm = aml::Device::new("TPM".into(), vtpm_device_data);
+        // pci_dsdt_inner_data.push(&vtpm);
+
 
         let pci_dsdt_data =
             aml::Device::new("_SB_.PCI0".into(), pci_dsdt_inner_data).to_aml_bytes();
