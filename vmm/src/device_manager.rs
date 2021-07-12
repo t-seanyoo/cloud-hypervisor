@@ -3921,6 +3921,10 @@ impl Aml for DeviceManager {
             pci_dsdt_inner_data.push(pci_device);
         }
 
+        // Add vtpm device onto PCI stack:
+        let vtpm_device = VTPMDevice { tpm_ppi_addr_base: (0xFED45000 as usize), };
+        pci_dsdt_inner_data.push(&vtpm_device);
+
         let pci_device_methods = PciDevSlotMethods {};
         pci_dsdt_inner_data.push(&pci_device_methods);
 
