@@ -675,6 +675,25 @@ impl<'a> Aml for Method<'a> {
     }
 }
 
+pub struct DerefOf<'a> {
+    arg: &'a dyn Aml,
+}
+
+impl<'a> DerefOf<'a> {
+    pub fn new(arg: &'a dyn Aml) -> Self {
+        DerefOf { arg }
+    }
+}
+
+/* ACPI 1.0b: 16.2.5.4 Type 2 Opcodes Encoding: DefDerefOf */
+impl<'a> Aml for DerefOf<'a> {
+    fn to_aml_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![0x83]; /* DerefOfOp */
+        bytes.append(&mut self.arg.to_aml_bytes());
+        bytes
+    }
+}
+
 pub struct Return<'a> {
     value: &'a dyn Aml,
 }
