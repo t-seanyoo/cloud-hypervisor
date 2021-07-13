@@ -805,15 +805,15 @@ pub enum OpRegionSpace {
     GenericSerialBus,
 }
 
-pub struct OpRegion {
+pub struct OpRegion<'a> {
     path: Path,
     space: OpRegionSpace,
-    offset: usize,
+    offset: &'a dyn Aml,
     length: usize,
 }
 
-impl OpRegion {
-    pub fn new(path: Path, space: OpRegionSpace, offset: usize, length: usize) -> Self {
+impl<'a> OpRegion<'a> {
+    pub fn new(path: Path, space: OpRegionSpace, offset: &'a dyn Aml, length: usize) -> Self {
         OpRegion {
             path,
             space,
@@ -823,7 +823,7 @@ impl OpRegion {
     }
 }
 
-impl Aml for OpRegion {
+impl<'a> Aml for OpRegion<'a> {
     fn to_aml_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.append(&mut self.path.to_aml_bytes());
