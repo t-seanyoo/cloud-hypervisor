@@ -1350,7 +1350,7 @@ impl Aml for Cpu {
         let mat_data: Vec<u8> = self.generate_mat();
 
         aml::Device::new(
-            format!("C{:03}", self.cpu_id).as_str().into(),
+            &aml::Path::new(format!("C{:03}", self.cpu_id).as_str()),
             vec![
                 &aml::Name::new("_HID".into(), &"ACPI0007"),
                 &aml::Name::new("_UID".into(), &self.cpu_id),
@@ -1551,7 +1551,7 @@ impl Aml for CpuManager {
         #[cfg(target_arch = "x86_64")]
         bytes.extend_from_slice(
             &aml::Device::new(
-                "_SB_.PRES".into(),
+                &aml::Path::new("_SB_.PRES"),
                 vec![
                     &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0A06")),
                     &aml::Name::new("_UID".into(), &"CPU Hotplug Controller"),
@@ -1570,7 +1570,7 @@ impl Aml for CpuManager {
                     &aml::OpRegion::new(
                         "PRST".into(),
                         aml::OpRegionSpace::SystemMemory,
-                        self.acpi_address.0 as usize,
+                        &(self.acpi_address.0 as usize),
                         CPU_MANAGER_ACPI_SIZE,
                     ),
                     &aml::Field::new(
@@ -1627,7 +1627,7 @@ impl Aml for CpuManager {
         }
 
         bytes.extend_from_slice(
-            &aml::Device::new("_SB_.CPUS".into(), cpu_data_inner).to_aml_bytes(),
+            &aml::Device::new(&aml::Path::new("_SB_.CPUS"), cpu_data_inner).to_aml_bytes(),
         );
         bytes
     }

@@ -108,7 +108,7 @@ impl BusDevice for AcpiGedDevice {
 impl Aml for AcpiGedDevice {
     fn to_aml_bytes(&self) -> Vec<u8> {
         aml::Device::new(
-            "_SB_.GED_".into(),
+            &aml::Path::new("_SB_.GED_"),
             vec![
                 &aml::Name::new("_HID".into(), &"ACPI0013"),
                 &aml::Name::new("_UID".into(), &aml::ZERO),
@@ -125,7 +125,7 @@ impl Aml for AcpiGedDevice {
                 &aml::OpRegion::new(
                     "GDST".into(),
                     aml::OpRegionSpace::SystemMemory,
-                    self.address.0 as usize,
+                    &(self.address.0 as usize),
                     GED_DEVICE_ACPI_SIZE,
                 ),
                 &aml::Field::new(

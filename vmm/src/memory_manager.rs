@@ -1583,7 +1583,7 @@ struct MemorySlot {
 impl Aml for MemorySlot {
     fn to_aml_bytes(&self) -> Vec<u8> {
         aml::Device::new(
-            format!("M{:03}", self.slot_id).as_str().into(),
+            &aml::Path::new(format!("M{:03}", self.slot_id).as_str()),
             vec![
                 &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0C80")),
                 &aml::Name::new("_UID".into(), &self.slot_id),
@@ -1820,7 +1820,7 @@ impl Aml for MemoryManager {
         // Memory Hotplug Controller
         bytes.extend_from_slice(
             &aml::Device::new(
-                "_SB_.MHPC".into(),
+                &aml::Path::new("_SB_.MHPC"),
                 vec![
                     &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0A06")),
                     &aml::Name::new("_UID".into(), &"Memory Hotplug Controller"),
@@ -1839,7 +1839,7 @@ impl Aml for MemoryManager {
                     &aml::OpRegion::new(
                         "MHPR".into(),
                         aml::OpRegionSpace::SystemMemory,
-                        self.acpi_address.0 as usize,
+                        &(self.acpi_address.0 as usize),
                         MEMORY_MANAGER_ACPI_SIZE,
                     ),
                     &aml::Field::new(
@@ -1903,7 +1903,7 @@ impl Aml for MemoryManager {
                 // SGX EPC region
                 bytes.extend_from_slice(
                     &aml::Device::new(
-                        "_SB_.EPC_".into(),
+                        &aml::Path::new("_SB_.EPC_"),
                         vec![
                             &aml::Name::new("_HID".into(), &aml::EisaName::new("INT0E0C")),
                             // QWORD describing the EPC region start and size

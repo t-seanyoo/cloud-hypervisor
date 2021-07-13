@@ -36,6 +36,24 @@ impl Aml for Ones {
     }
 }
 
+pub struct DeviceName {
+    name: String,
+}
+
+impl Aml for DeviceName {
+    fn to_aml_bytes(&self) -> Vec<u8> {
+        let mut data = vec![];
+        data.extend_from_slice(self.name.as_bytes());
+        data
+    }
+}
+
+impl DeviceName {
+    pub fn new(name: String) -> Self {
+        DeviceName { name }
+    }
+}
+
 pub struct Path {
     root: bool,
     name_parts: Vec<[u8; 4]>,
@@ -576,7 +594,7 @@ impl Aml for Interrupt {
 }
 
 pub struct Device<'a> {
-    path: Path,
+    path: &'a dyn Aml,
     children: Vec<&'a dyn Aml>,
 }
 
@@ -601,7 +619,7 @@ impl<'a> Aml for Device<'a> {
 }
 
 impl<'a> Device<'a> {
-    pub fn new(path: Path, children: Vec<&'a dyn Aml>) -> Self {
+    pub fn new(path: &'a dyn Aml, children: Vec<&'a dyn Aml>) -> Self {
         Device { path, children }
     }
 }
@@ -1688,7 +1706,7 @@ mod tests {
         ];
 
         assert_eq!(
-            OpRegion::new("PRST".into(), OpRegionSpace::SystemIo, 0xcd8, 0xc).to_aml_bytes(),
+            OpRegion::new("PRST".into(), OpRegionSpace::SystemIo, &(0xcd8 as usize), 0xc).to_aml_bytes(),
             &op_region_data[..]
         );
     }

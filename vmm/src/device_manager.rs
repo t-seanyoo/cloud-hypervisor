@@ -3555,7 +3555,7 @@ impl Aml for PciDevSlot {
         let sun = self.device_id;
         let adr: u32 = (self.device_id as u32) << 16;
         aml::Device::new(
-            format!("S{:03}", self.device_id).as_str().into(),
+            &aml::Path::new(format!("S{:03}", self.device_id).as_str()),
             vec![
                 &aml::Name::new("_SUN".into(), &sun),
                 &aml::Name::new("_ADR".into(), &adr),
@@ -3726,13 +3726,13 @@ impl Aml for VTPMDevice {
         uuidu_buf.extend(&uuidu_d3.to_le_bytes());
         uuidu_buf.extend(uuidu_d4);
 
-        let pprq = &aml::Path::new(&"PPRQ");
-        let pprm = &aml::Path::new(&"PPRM");
-        let tpm2 = &aml::Path::new(&"TPM2");
-        let tpm3 = &aml::Path::new(&"TPM3");
+        let pprq = &aml::Path::new("PPRQ");
+        let pprm = &aml::Path::new("PPRM");
+        let tpm2 = &aml::Path::new("TPM2");
+        let tpm3 = &aml::Path::new("TPM3");
 
         aml::Device::new(
-            "TPM".into(),
+            &aml::DeviceName::new("TPM".to_string()),
             vec![
                 &aml::Name::new("_HID".into(), &"MSFT0101"),
                 &aml::Name::new("_STA".into(), &(0xF as usize)),
@@ -3747,7 +3747,7 @@ impl Aml for VTPMDevice {
                 &aml::OpRegion::new(
                     "TPP2".into(),
                     aml::OpRegionSpace::SystemMemory,
-                    self.tpm_ppi_addr_base + (0x100 as usize),
+                    &((self.tpm_ppi_addr_base + 0x100) as usize),
                     0x5A as usize,
                 ),
                 &aml::Field::new(
@@ -3766,12 +3766,12 @@ impl Aml for VTPMDevice {
                 &aml::OpRegion::new(
                     "TPP3".into(),
                     aml::OpRegionSpace::SystemMemory,
-                    self.tpm_ppi_addr_base + (0x15a as usize),
+                    &((self.tpm_ppi_addr_base + 0x15a) as usize),
                     0x1 as usize,
                 ),
                 &aml::Field::new(
                     "TPP3".into(),
-                    aml::FieldAccessType::Any,
+                    aml::FieldAccessType::Byte,
                     aml::FieldUpdateRule::Preserve,
                     vec![
                         aml::FieldEntry::Named(*b"MOVV", 8),
@@ -3789,7 +3789,7 @@ impl Aml for VTPMDevice {
                         &aml::OpRegion::new(
                             "TPP1".into(),
                             aml::OpRegionSpace::SystemMemory,
-                            &aml::Add::new(&(0x00 as usize), self.tpm_ppi_addr_base, (&aml::Arg(0))),
+                            &aml::Add::new(&(0x00 as usize), &(self.tpm_ppi_addr_base as usize), &aml::Arg(0)),
                             0x1 as usize,
                         ),
                     ],
@@ -3877,8 +3877,8 @@ impl Aml for VTPMDevice {
                                 &aml::If::new(
                                     &aml::Equal::new(&aml::Arg(2), &(5 as usize)),
                                     vec![
-                                        &aml::Store::new(&aml::Index::new(&(0x00 as usize), tpm3, &aml::ONE), pprq), // TPM3 [One] = LPPR /* \_SB_.PCI0.TPM_.LPPR */
-                                        &aml::Store::new(&aml::Index::new(&(0x00 as usize), tpm3, &(2 as usize)), &aml::Path::new(&"PPRP")), // TPM3 [0x02] = PPRP /* \_SB_.PCI0.TPM_.PPRP */
+                                        &aml::Store::new(&aml::Index::new(&(0x00 as usize), tpm3, &aml::ONE), &aml::Path::new("LPPR")), // TPM3 [One] = LPPR /* \_SB_.PCI0.TPM_.LPPR */
+                                        &aml::Store::new(&aml::Index::new(&(0x00 as usize), tpm3, &(2 as usize)), &aml::Path::new("PPRP")), // TPM3 [0x02] = PPRP /* \_SB_.PCI0.TPM_.PPRP */
                                         &aml::Return::new(tpm3), // Return (TPM3) /* \_SB_.PCI0.TPM_.TPM3 */
                                     ],
                                 ),
@@ -3911,7 +3911,7 @@ impl Aml for VTPMDevice {
                                         ),
 
                                         &aml::If::new(
-                                            &aml::Equal::new(&aml::Arg(1), &aml::ONE), // If ((Arg1 == 0x02))
+                                            &aml::Equal::new(&aml::Arg(1), &(2 as usize)), // If ((Arg1 == 0x02))
                                             vec![
                                                 &aml::Store::new(pprq, &aml::Local(0)), // PPRQ = Local0
                                                 &aml::Store::new(pprm, &aml::DerefOf::new(&aml::Index::new(&(0x00 as usize), &aml::Arg(3), &aml::ONE))), // PPRM = DerefOf (Arg3 [One])
@@ -3945,7 +3945,7 @@ impl Aml for VTPMDevice {
                                     &aml::Equal::new(&aml::Arg(2), &aml::ONE),
                                     vec![
                                         &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&(0x00 as usize), &aml::Arg(3), &aml::ZERO))), // Local0 = DerefOf (Arg3 [Zero])
-                                        &aml::Store::new(&aml::Path::new(&"MOVV"), &aml::Local(0)), // MOVV = Local0
+                                        &aml::Store::new(&aml::Path::new("MOVV"), &aml::Local(0)), // MOVV = Local0
                                         &aml::Return::new(&aml::ZERO), // Return (Zero)
                                     ],
                                 ),
@@ -3969,7 +3969,7 @@ impl Aml for DeviceManager {
         // PCI hotplug controller
         bytes.extend_from_slice(
             &aml::Device::new(
-                "_SB_.PHPR".into(),
+                &aml::Path::new("_SB_.PHPR"),
                 vec![
                     &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0A06")),
                     &aml::Name::new("_STA".into(), &0x0bu8),
@@ -3988,7 +3988,7 @@ impl Aml for DeviceManager {
                     &aml::OpRegion::new(
                         "PCST".into(),
                         aml::OpRegionSpace::SystemMemory,
-                        self.acpi_address.0 as usize,
+                        &(self.acpi_address.0 as usize),
                         DEVICE_MANAGER_ACPI_SIZE,
                     ),
                     &aml::Field::new(
@@ -4117,10 +4117,10 @@ impl Aml for DeviceManager {
         pci_dsdt_inner_data.push(&prt);
 
         let pci_dsdt_data =
-            aml::Device::new("_SB_.PCI0".into(), pci_dsdt_inner_data).to_aml_bytes();
+            aml::Device::new(&aml::Path::new("_SB_.PCI0"), pci_dsdt_inner_data).to_aml_bytes();
 
         let mbrd_dsdt_data = aml::Device::new(
-            "_SB_.MBRD".into(),
+            &aml::Path::new("_SB_.MBRD"),
             vec![
                 &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0C02")),
                 &aml::Name::new("_UID".into(), &aml::ZERO),
@@ -4152,7 +4152,7 @@ impl Aml for DeviceManager {
                 31
             };
         let com1_dsdt_data = aml::Device::new(
-            "_SB_.COM1".into(),
+            &aml::Path::new("_SB_.COM1"),
             vec![
                 &aml::Name::new(
                     "_HID".into(),
@@ -4184,7 +4184,7 @@ impl Aml for DeviceManager {
             aml::Name::new("_S5_".into(), &aml::Package::new(vec![&5u8])).to_aml_bytes();
 
         let power_button_dsdt_data = aml::Device::new(
-            "_SB_.PWRB".into(),
+            &aml::Path::new("_SB_.PWRB"),
             vec![
                 &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0C0C")),
                 &aml::Name::new("_UID".into(), &aml::ZERO),

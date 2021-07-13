@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
+
 #[repr(packed)]
 pub struct GenericAddress {
     pub address_space_id: u8,
