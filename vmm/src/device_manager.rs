@@ -3789,8 +3789,16 @@ impl Aml for VTPMDevice {
                         &aml::OpRegion::new(
                             "TPP1".into(),
                             aml::OpRegionSpace::SystemMemory,
-                            &aml::Add::new(&(0x00 as usize), &(self.tpm_ppi_addr_base as usize), &aml::Arg(0)),
+                            &aml::Add::new(&0x0u8, &(self.tpm_ppi_addr_base as usize), &aml::Arg(0)),
                             0x1 as usize,
+                        ),
+                        &aml::Field::new(
+                            "TPP1".into(),
+                            aml::FieldAccessType::Byte,
+                            aml::FieldUpdateRule::Preserve,
+                            vec![
+                                aml::FieldEntry::Named(*b"TPPF", 8),
+                            ],
                         ),
                     ],
                 ),
@@ -3836,11 +3844,11 @@ impl Aml for VTPMDevice {
                                     &aml::Equal::new(&aml::Arg(2), &(2 as usize)),
                                     vec![
                                         // Local0 = DerefOf (Arg3 [Zero])
-                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&(0x00 as usize), &aml::Arg(3), &aml::ZERO))),
+                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&0x0u8, &aml::Arg(3), &aml::ZERO))),
                                         // Local1 = TPFN (Local0)
                                         &aml::Store::new(&aml::Local(1), &aml::MethodCall::new("TPFN".into(), vec![&aml::Local(0)],)), 
                                         &aml::If::new( // If (((Local1 & 0x07) == Zero))
-                                            &aml::Equal::new(&aml::And::new(&(0x00 as usize), &aml::Local(1), &((7 << 0) as usize)), &aml::ZERO),
+                                            &aml::Equal::new(&aml::And::new(&0x0u8, &aml::Local(1), &((7 << 0) as usize)), &aml::ZERO),
                                             vec![&aml::Return::new(&aml::ONE)], // Return (One)
                                         ),
                                         &aml::Store::new(pprq, &aml::Local(0)), // PPRQ = Local0
@@ -3854,7 +3862,7 @@ impl Aml for VTPMDevice {
                                         &aml::If::new(
                                             &aml::Equal::new(&aml::Arg(1), &aml::ONE),
                                             vec![
-                                                &aml::Store::new(&aml::Index::new(&(0x00 as usize), tpm2, &aml::ONE), pprq), // TPM2 [One] = PPRQ /* \_SB_.PCI0.TPM_.PPRQ */
+                                                &aml::Store::new(&aml::Index::new(&0x0u8, tpm2, &aml::ONE), pprq), // TPM2 [One] = PPRQ /* \_SB_.PCI0.TPM_.PPRQ */
                                                 &aml::Return::new(tpm2), // Return (TPM2) /* \_SB_.PCI0.TPM_.TPM2 */
                                             ],
                                         ),
@@ -3891,14 +3899,14 @@ impl Aml for VTPMDevice {
                                 &aml::If::new(
                                     &aml::Equal::new(&aml::Arg(2), &(7 as usize)),
                                     vec![
-                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&(0x00 as usize), &aml::Arg(3), &aml::ZERO))), // Local0 = DerefOf (Arg3 [Zero])
+                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&0x0u8, &aml::Arg(3), &aml::ZERO))), // Local0 = DerefOf (Arg3 [Zero])
                                         &aml::Store::new(&aml::Local(1), &aml::MethodCall::new("TPFN".into(), vec![&aml::Local(0)],)), // Local1 = TPFN (Local0)
                                         &aml::If::new( // If (((Local1 & 0x07) == Zero))
-                                            &aml::Equal::new(&aml::And::new(&(0x00 as usize), &aml::Local(1), &((7 << 0) as usize)), &aml::ZERO),
+                                            &aml::Equal::new(&aml::And::new(&0x0u8, &aml::Local(1), &((7 << 0) as usize)), &aml::ZERO),
                                             vec![&aml::Return::new(&aml::ONE)], // Return (One)
                                         ),
                                         &aml::If::new( // If (((Local1 & 0x07) == 0x02))
-                                            &aml::Equal::new(&aml::And::new(&(0x00 as usize), &aml::Local(1), &((7 << 0) as usize)), &(2 as usize)),
+                                            &aml::Equal::new(&aml::And::new(&0x0u8, &aml::Local(1), &((7 << 0) as usize)), &(2 as usize)),
                                             vec![&aml::Return::new(&(3 as usize))], // Return (0x03)
                                         ),
 
@@ -3914,7 +3922,7 @@ impl Aml for VTPMDevice {
                                             &aml::Equal::new(&aml::Arg(1), &(2 as usize)), // If ((Arg1 == 0x02))
                                             vec![
                                                 &aml::Store::new(pprq, &aml::Local(0)), // PPRQ = Local0
-                                                &aml::Store::new(pprm, &aml::DerefOf::new(&aml::Index::new(&(0x00 as usize), &aml::Arg(3), &aml::ONE))), // PPRM = DerefOf (Arg3 [One])
+                                                &aml::Store::new(pprm, &aml::DerefOf::new(&aml::Index::new(&0x0u8, &aml::Arg(3), &aml::ONE))), // PPRM = DerefOf (Arg3 [One])
                                             ],
                                         ),
 
@@ -3924,10 +3932,10 @@ impl Aml for VTPMDevice {
                                 &aml::If::new(
                                     &aml::Equal::new(&aml::Arg(2), &(8 as usize)),
                                     vec![
-                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&(0x00 as usize), &aml::Arg(3), &aml::ZERO))), // Local0 = DerefOf (Arg3 [Zero])
+                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&0x0u8, &aml::Arg(3), &aml::ZERO))), // Local0 = DerefOf (Arg3 [Zero])
                                         &aml::Store::new(&aml::Local(1), &aml::MethodCall::new("TPFN".into(), vec![&aml::Local(0)],)),  // Local1 = TPFN (Local0)
                                         &aml::Return::new(
-                                            &aml::And::new(&(0x00 as usize), 
+                                            &aml::And::new(&0x0u8, 
                                                 &aml::Local(1), &((7 << 0) as usize))) // Return ((Local1 & 0x07))
                                     ],
                                 ),
@@ -3944,7 +3952,7 @@ impl Aml for VTPMDevice {
                                 &aml::If::new( // If ((Arg2 == One))
                                     &aml::Equal::new(&aml::Arg(2), &aml::ONE),
                                     vec![
-                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&(0x00 as usize), &aml::Arg(3), &aml::ZERO))), // Local0 = DerefOf (Arg3 [Zero])
+                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&0x0u8, &aml::Arg(3), &aml::ZERO))), // Local0 = DerefOf (Arg3 [Zero])
                                         &aml::Store::new(&aml::Path::new("MOVV"), &aml::Local(0)), // MOVV = Local0
                                         &aml::Return::new(&aml::ZERO), // Return (Zero)
                                     ],
