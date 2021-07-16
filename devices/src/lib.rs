@@ -7,6 +7,7 @@
 
 //! Emulates virtual and hardware devices.
 
+
 #[macro_use]
 extern crate bitflags;
 #[macro_use]
@@ -20,6 +21,8 @@ pub mod interrupt_controller;
 #[cfg(target_arch = "x86_64")]
 pub mod ioapic;
 pub mod legacy;
+
+pub mod tpm_tis;
 
 #[cfg(feature = "acpi")]
 pub use self::acpi::{AcpiGedDevice, AcpiPmTimerDevice, AcpiShutdownDevice};

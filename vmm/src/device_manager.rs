@@ -965,6 +965,7 @@ impl DeviceManager {
             .ok_or(DeviceManagerError::AllocateIoPort)?;
         let device_manager = DeviceManager {
             address_manager: Arc::clone(&address_manager),
+            // vtpm: None,
             console: Arc::new(Console::default()),
             interrupt_controller: None,
             cmdline_additions: Vec::new(),
@@ -1063,6 +1064,8 @@ impl DeviceManager {
                 .map_err(DeviceManagerError::BusError)?;
         }
 
+        
+
         #[cfg(target_arch = "x86_64")]
         self.add_legacy_devices(
             self.reset_evt
@@ -1092,6 +1095,11 @@ impl DeviceManager {
             serial_pty,
             console_pty,
         )?;
+
+        let vtpm = self.add_vtpm_device(
+            &legacy_interrupt_manager
+        )?;
+        self.bus_devices.push(Arc::clone(&vtpm) as Arc<Mutex<dyn BusDevice>>);
 
         // Reserve some IRQs for PCI devices in case they need to support INTx.
         self.reserve_legacy_interrupts_for_pci_devices()?;
@@ -1148,13 +1156,6 @@ impl DeviceManager {
         &self.id_to_dev_info
     }
 
-    // fn add_vtpm_device(
-    //     &mut self,
-    // ) -> DeviceManagerResult<()> {
-
-    //     // Memory Mapped IO + Handlers
-    //     Ok(())
-    // }
 
     #[allow(unused_variables)]
     fn add_pci_devices(
@@ -1580,6 +1581,41 @@ impl DeviceManager {
             .insert(id.clone(), device_node!(id, serial));
 
         Ok(serial)
+    }
+
+    fn add_vtpm_device(
+        &mut self,
+        // serial_writer: Option<Box<dyn io::Write + Send>>,
+        interrupt_manager: &Arc<dyn InterruptManager<GroupConfig = LegacyIrqGroupConfig>>,
+    ) -> DeviceManagerResult<Arc<Mutex<devices::tpm_tis::TPMIsa>>> {
+
+        let irq_num = self
+            .address_manager
+            .allocator
+            .lock()
+            .unwrap()
+            .allocate_irq()
+            .unwrap();
+
+        let interrupt_group = interrupt_manager
+            .create_group(LegacyIrqGroupConfig {
+                irq: irq_num as InterruptIndex,
+            })
+            .map_err(DeviceManagerError::CreateInterruptGroup)?;
+
+        // Must Create VTPM Device...
+        let vtpm = Arc::new(Mutex::new(devices::tpm_tis::TPMIsa::new(
+            interrupt_group,
+            irq_num as InterruptIndex,
+        )));
+
+        // Add VTPM Device to mmio
+        self.address_manager
+            .mmio_bus
+            .insert(vtpm.clone(), arch::layout::VTPM_START.0, arch::layout::VTPM_SIZE)
+            .map_err(DeviceManagerError::BusError)?;
+
+        Ok(vtpm)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -3555,7 +3591,7 @@ impl Aml for PciDevSlot {
         let sun = self.device_id;
         let adr: u32 = (self.device_id as u32) << 16;
         aml::Device::new(
-            &aml::Path::new(format!("S{:03}", self.device_id).as_str()),
+            format!("S{:03}", self.device_id).as_str().into(),
             vec![
                 &aml::Name::new("_SUN".into(), &sun),
                 &aml::Name::new("_ADR".into(), &adr),
@@ -3703,36 +3739,13 @@ impl Aml for PciDsmMethod {
 }
 
 #[cfg(feature = "acpi")]
-struct VTPMDevice {
-    tpm_ppi_addr_base: usize,
-}
+struct VTPMDevice {}
 
 #[cfg(feature = "acpi")]
 impl Aml for VTPMDevice {
     fn to_aml_bytes(&self) -> Vec<u8> {
-        let uuid = Uuid::parse_str("3DDDFAA6-361B-4EB4-A424-8D10089D1653").unwrap();
-        let (uuid_d1, uuid_d2, uuid_d3, uuid_d4) = uuid.as_fields();
-        let mut uuid_buf = vec![];
-        uuid_buf.extend(&uuid_d1.to_le_bytes());
-        uuid_buf.extend(&uuid_d2.to_le_bytes());
-        uuid_buf.extend(&uuid_d3.to_le_bytes());
-        uuid_buf.extend(uuid_d4);
-
-        let uuid_unknown = Uuid::parse_str("376054ed-cc13-4675-901c-4756d7f2d45d").unwrap();
-        let (uuidu_d1, uuidu_d2, uuidu_d3, uuidu_d4) = uuid_unknown.as_fields();
-        let mut uuidu_buf = vec![];
-        uuidu_buf.extend(&uuidu_d1.to_le_bytes());
-        uuidu_buf.extend(&uuidu_d2.to_le_bytes());
-        uuidu_buf.extend(&uuidu_d3.to_le_bytes());
-        uuidu_buf.extend(uuidu_d4);
-
-        let pprq = &aml::Path::new("PPRQ");
-        let pprm = &aml::Path::new("PPRM");
-        let tpm2 = &aml::Path::new("TPM2");
-        let tpm3 = &aml::Path::new("TPM3");
-
         aml::Device::new(
-            &aml::DeviceName::new("TPM".to_string()),
+            "TPM2".into(),
             vec![
                 &aml::Name::new("_HID".into(), &"MSFT0101"),
                 &aml::Name::new("_STA".into(), &(0xF as usize)),
@@ -3743,227 +3756,9 @@ impl Aml for VTPMDevice {
                         layout::VTPM_START.0 as u32,
                         layout::VTPM_SIZE as u32,
                     )]),
-                ),
-                &aml::OpRegion::new(
-                    "TPP2".into(),
-                    aml::OpRegionSpace::SystemMemory,
-                    &((self.tpm_ppi_addr_base + 0x100) as usize),
-                    0x5A as usize,
-                ),
-                &aml::Field::new(
-                    "TPP2".into(),
-                    aml::FieldAccessType::Any,
-                    aml::FieldUpdateRule::Preserve,
-                    vec![
-                        aml::FieldEntry::Named(*b"PPIN", 8),
-                        aml::FieldEntry::Named(*b"PPIP", 32),
-                        aml::FieldEntry::Named(*b"PPRP", 32),
-                        aml::FieldEntry::Named(*b"PPRQ", 32),
-                        aml::FieldEntry::Named(*b"PPRM", 32),
-                        aml::FieldEntry::Named(*b"LPPR", 32),
-                    ],
-                ),
-                &aml::OpRegion::new(
-                    "TPP3".into(),
-                    aml::OpRegionSpace::SystemMemory,
-                    &((self.tpm_ppi_addr_base + 0x15a) as usize),
-                    0x1 as usize,
-                ),
-                &aml::Field::new(
-                    "TPP3".into(),
-                    aml::FieldAccessType::Byte,
-                    aml::FieldUpdateRule::Preserve,
-                    vec![
-                        aml::FieldEntry::Named(*b"MOVV", 8),
-                    ],
-                ),
-                &aml::Method::new(
-                    "TPFN".into(),
-                    1,
-                    true,
-                    vec![
-                        &aml::If::new(
-                            &aml::GreaterThanEqual::new(&aml::Arg(0), &(0x100 as usize)),
-                            vec![&aml::Return::new(&aml::ZERO)],
-                        ),
-                        &aml::OpRegion::new(
-                            "TPP1".into(),
-                            aml::OpRegionSpace::SystemMemory,
-                            &aml::Add::new(&0x0u8, &(self.tpm_ppi_addr_base as usize), &aml::Arg(0)),
-                            0x1 as usize,
-                        ),
-                        &aml::Field::new(
-                            "TPP1".into(),
-                            aml::FieldAccessType::Byte,
-                            aml::FieldUpdateRule::Preserve,
-                            vec![
-                                aml::FieldEntry::Named(*b"TPPF", 8),
-                            ],
-                        ),
-                    ],
-                ),
-                &aml::Name::new("TPM2".into(), &aml::Package::new(vec![&aml::ZERO, &aml::ZERO])),
-                &aml::Name::new("TPM3".into(), &aml::Package::new(vec![&aml::ZERO, &aml::ZERO, &aml::ZERO])),
-                &aml::Method::new(
-                    "_DSM".into(),
-                    4,
-                    true,
-                    vec![
-                        // Fill out PPI Method
-                        &aml::If::new(
-                            &aml::Equal::new(&aml::Arg(0), &aml::Buffer::new(uuid_buf)),
-                            vec![
-                                /* standard DSM query function */
-                                &aml::If::new(
-                                    &aml::Equal::new(&aml::Arg(2), &aml::ZERO),
-                                    vec![&aml::Return::new(&aml::Buffer::new(vec![0xFF, 0x01]))],
-                                ),
-                                /*
-                                * PPI 1.0: 2.1.1 Get Physical Presence Interface Version
-                                *
-                                * Arg 2 (Integer): Function Index = 1
-                                * Arg 3 (Package): Arguments = Empty Package
-                                * Returns: Type: String
-                                */
-                                &aml::If::new(
-                                    &aml::Equal::new(&aml::Arg(2), &aml::ONE),
-                                    vec![&aml::Return::new(&"1.3")],
-                                ),
-                                /*
-                                * PPI 1.0: 2.1.3 Submit TPM Operation Request to Pre-OS Environment
-                                *
-                                * Arg 2 (Integer): Function Index = 2
-                                * Arg 3 (Package): Arguments = Package: Type: Integer
-                                *                              Operation Value of the Request
-                                * Returns: Type: Integer
-                                *          0: Success
-                                *          1: Operation Value of the Request Not Supported
-                                *          2: General Failure
-                                */
-                                &aml::If::new(
-                                    &aml::Equal::new(&aml::Arg(2), &(2 as usize)),
-                                    vec![
-                                        // Local0 = DerefOf (Arg3 [Zero])
-                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&0x0u8, &aml::Arg(3), &aml::ZERO))),
-                                        // Local1 = TPFN (Local0)
-                                        &aml::Store::new(&aml::Local(1), &aml::MethodCall::new("TPFN".into(), vec![&aml::Local(0)],)), 
-                                        &aml::If::new( // If (((Local1 & 0x07) == Zero))
-                                            &aml::Equal::new(&aml::And::new(&0x0u8, &aml::Local(1), &((7 << 0) as usize)), &aml::ZERO),
-                                            vec![&aml::Return::new(&aml::ONE)], // Return (One)
-                                        ),
-                                        &aml::Store::new(pprq, &aml::Local(0)), // PPRQ = Local0
-                                        &aml::Store::new(pprm, &aml::ZERO), // PPRM = Zero
-                                        &aml::Return::new(&aml::ZERO), // Return (Zero)
-                                    ],
-                                ),
-                                &aml::If::new(
-                                    &aml::Equal::new(&aml::Arg(2), &(3 as usize)),
-                                    vec![
-                                        &aml::If::new(
-                                            &aml::Equal::new(&aml::Arg(1), &aml::ONE),
-                                            vec![
-                                                &aml::Store::new(&aml::Index::new(&0x0u8, tpm2, &aml::ONE), pprq), // TPM2 [One] = PPRQ /* \_SB_.PCI0.TPM_.PPRQ */
-                                                &aml::Return::new(tpm2), // Return (TPM2) /* \_SB_.PCI0.TPM_.TPM2 */
-                                            ],
-                                        ),
-                                        &aml::If::new(
-                                            &aml::Equal::new(&aml::Arg(1), &(2 as usize)),
-                                            vec![
-                                                &aml::Store::new(&aml::Index::new(&(0x00 as usize), tpm3, &aml::ONE), pprq), // TPM3 [One] = PPRQ /* \_SB_.PCI0.TPM_.PPRQ */
-                                                &aml::Store::new(&aml::Index::new(&(0x00 as usize), tpm3, &(2 as usize)), pprm), // TPM3 [0x02] = PPRM /* \_SB_.PCI0.TPM_.PPRM */
-                                                &aml::Return::new(tpm3), // Return (TPM3) /* \_SB_.PCI0.TPM_.TPM3 */
-                                            ],
-                                        ),
-                                    ],
-                                ),
-                                &aml::If::new(
-                                    &aml::Equal::new(&aml::Arg(2), &(4 as usize)),
-                                    vec![
-                                        &aml::Return::new(&(2 as usize)),
-                                    ],
-                                ),
-                                &aml::If::new(
-                                    &aml::Equal::new(&aml::Arg(2), &(5 as usize)),
-                                    vec![
-                                        &aml::Store::new(&aml::Index::new(&(0x00 as usize), tpm3, &aml::ONE), &aml::Path::new("LPPR")), // TPM3 [One] = LPPR /* \_SB_.PCI0.TPM_.LPPR */
-                                        &aml::Store::new(&aml::Index::new(&(0x00 as usize), tpm3, &(2 as usize)), &aml::Path::new("PPRP")), // TPM3 [0x02] = PPRP /* \_SB_.PCI0.TPM_.PPRP */
-                                        &aml::Return::new(tpm3), // Return (TPM3) /* \_SB_.PCI0.TPM_.TPM3 */
-                                    ],
-                                ),
-                                &aml::If::new(
-                                    &aml::Equal::new(&aml::Arg(2), &(6 as usize)),
-                                    vec![
-                                        &aml::Return::new(&(3 as usize)),
-                                    ],
-                                ),
-                                &aml::If::new(
-                                    &aml::Equal::new(&aml::Arg(2), &(7 as usize)),
-                                    vec![
-                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&0x0u8, &aml::Arg(3), &aml::ZERO))), // Local0 = DerefOf (Arg3 [Zero])
-                                        &aml::Store::new(&aml::Local(1), &aml::MethodCall::new("TPFN".into(), vec![&aml::Local(0)],)), // Local1 = TPFN (Local0)
-                                        &aml::If::new( // If (((Local1 & 0x07) == Zero))
-                                            &aml::Equal::new(&aml::And::new(&0x0u8, &aml::Local(1), &((7 << 0) as usize)), &aml::ZERO),
-                                            vec![&aml::Return::new(&aml::ONE)], // Return (One)
-                                        ),
-                                        &aml::If::new( // If (((Local1 & 0x07) == 0x02))
-                                            &aml::Equal::new(&aml::And::new(&0x0u8, &aml::Local(1), &((7 << 0) as usize)), &(2 as usize)),
-                                            vec![&aml::Return::new(&(3 as usize))], // Return (0x03)
-                                        ),
-
-                                        &aml::If::new(
-                                            &aml::Equal::new(&aml::Arg(1), &aml::ONE), // If ((Arg1 == One))
-                                            vec![
-                                                &aml::Store::new(pprq, &aml::Local(0)), // PPRQ = Local0
-                                                &aml::Store::new(pprm, &aml::ZERO), // PPRM = Zero
-                                            ],
-                                        ),
-
-                                        &aml::If::new(
-                                            &aml::Equal::new(&aml::Arg(1), &(2 as usize)), // If ((Arg1 == 0x02))
-                                            vec![
-                                                &aml::Store::new(pprq, &aml::Local(0)), // PPRQ = Local0
-                                                &aml::Store::new(pprm, &aml::DerefOf::new(&aml::Index::new(&0x0u8, &aml::Arg(3), &aml::ONE))), // PPRM = DerefOf (Arg3 [One])
-                                            ],
-                                        ),
-
-                                        &aml::Return::new(&aml::ZERO), // Return (Zero)
-                                    ],
-                                ),
-                                &aml::If::new(
-                                    &aml::Equal::new(&aml::Arg(2), &(8 as usize)),
-                                    vec![
-                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&0x0u8, &aml::Arg(3), &aml::ZERO))), // Local0 = DerefOf (Arg3 [Zero])
-                                        &aml::Store::new(&aml::Local(1), &aml::MethodCall::new("TPFN".into(), vec![&aml::Local(0)],)),  // Local1 = TPFN (Local0)
-                                        &aml::Return::new(
-                                            &aml::And::new(&0x0u8, 
-                                                &aml::Local(1), &((7 << 0) as usize))) // Return ((Local1 & 0x07))
-                                    ],
-                                ),
-                                &aml::Return::new(&aml::Buffer::new(vec![0])),
-                            ],
-                        ),
-                        &aml::If::new( //If ((Arg0 == ToUUID ("376054ed-cc13-4675-901c-4756d7f2d45d") /* Unknown UUID */))
-                            &aml::Equal::new(&aml::Arg(0), &aml::Buffer::new(uuidu_buf)),
-                            vec![
-                                &aml::If::new( // If ((Arg2 == Zero))
-                                    &aml::Equal::new(&aml::Arg(2), &aml::ZERO),
-                                    vec![&aml::Return::new(&aml::Buffer::new(vec![0x03]))], // Return (Buffer (One) { 0x03 })
-                                ),
-                                &aml::If::new( // If ((Arg2 == One))
-                                    &aml::Equal::new(&aml::Arg(2), &aml::ONE),
-                                    vec![
-                                        &aml::Store::new(&aml::Local(0), &aml::DerefOf::new(&aml::Index::new(&0x0u8, &aml::Arg(3), &aml::ZERO))), // Local0 = DerefOf (Arg3 [Zero])
-                                        &aml::Store::new(&aml::Path::new("MOVV"), &aml::Local(0)), // MOVV = Local0
-                                        &aml::Return::new(&aml::ZERO), // Return (Zero)
-                                    ],
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-            ],
-        )
-        .to_aml_bytes()
+                 ),
+            ]
+        ).to_aml_bytes()
     }
 }
 
@@ -3977,7 +3772,7 @@ impl Aml for DeviceManager {
         // PCI hotplug controller
         bytes.extend_from_slice(
             &aml::Device::new(
-                &aml::Path::new("_SB_.PHPR"),
+                "_SB_.PHPR".into(),
                 vec![
                     &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0A06")),
                     &aml::Name::new("_STA".into(), &0x0bu8),
@@ -4085,6 +3880,12 @@ impl Aml for DeviceManager {
                 &aml::AddressSpace::new_io(0u16, 0x0cf7u16),
                 #[cfg(target_arch = "x86_64")]
                 &aml::AddressSpace::new_io(0x0d00u16, 0xffffu16),
+                //VTPM RESOURCE SPACE
+                // &aml::Memory32Fixed::new(
+                //     true,
+                //     layout::VTPM_START.0 as u32,
+                //     layout::VTPM_SIZE as u32,
+                // ),
             ]),
         );
         pci_dsdt_inner_data.push(&crs);
@@ -4098,10 +3899,6 @@ impl Aml for DeviceManager {
         for pci_device in pci_devices.iter() {
             pci_dsdt_inner_data.push(pci_device);
         }
-
-        // Add vtpm device onto PCI stack:
-        let vtpm_device = VTPMDevice { tpm_ppi_addr_base: (0xFED45000 as usize), };
-        pci_dsdt_inner_data.push(&vtpm_device);
 
         let pci_device_methods = PciDevSlotMethods {};
         pci_dsdt_inner_data.push(&pci_device_methods);
@@ -4125,10 +3922,10 @@ impl Aml for DeviceManager {
         pci_dsdt_inner_data.push(&prt);
 
         let pci_dsdt_data =
-            aml::Device::new(&aml::Path::new("_SB_.PCI0"), pci_dsdt_inner_data).to_aml_bytes();
+            aml::Device::new("_SB_.PCI0".into(), pci_dsdt_inner_data).to_aml_bytes();
 
         let mbrd_dsdt_data = aml::Device::new(
-            &aml::Path::new("_SB_.MBRD"),
+            "_SB_.MBRD".into(),
             vec![
                 &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0C02")),
                 &aml::Name::new("_UID".into(), &aml::ZERO),
@@ -4160,7 +3957,7 @@ impl Aml for DeviceManager {
                 31
             };
         let com1_dsdt_data = aml::Device::new(
-            &aml::Path::new("_SB_.COM1"),
+            "_SB_.COM1".into(),
             vec![
                 &aml::Name::new(
                     "_HID".into(),
@@ -4192,13 +3989,28 @@ impl Aml for DeviceManager {
             aml::Name::new("_S5_".into(), &aml::Package::new(vec![&5u8])).to_aml_bytes();
 
         let power_button_dsdt_data = aml::Device::new(
-            &aml::Path::new("_SB_.PWRB"),
+            "_SB_.PWRB".into(),
             vec![
                 &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0C0C")),
                 &aml::Name::new("_UID".into(), &aml::ZERO),
             ],
         )
         .to_aml_bytes();
+
+
+        // // Add vtpm device:
+        let vtpm_acpi = VTPMDevice {};
+        let vtpm_dsdt_data = vtpm_acpi.to_aml_bytes();
+        bytes.extend_from_slice(vtpm_dsdt_data.as_slice());
+
+        //MANUAL 
+        // let mut vtpm_acpi = Vec::<u8>::new();
+        
+        // vtpm_acpi.extend(b"TPM2");
+        // vtpm_acpi.extend();
+        // bytes.extend_from_slice(vtpm_acpi.as_slice());
+
+        
 
         let ged_data = self
             .ged_notification_device
