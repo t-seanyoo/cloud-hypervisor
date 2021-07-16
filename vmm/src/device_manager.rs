@@ -3555,7 +3555,7 @@ impl Aml for PciDevSlot {
         let sun = self.device_id;
         let adr: u32 = (self.device_id as u32) << 16;
         aml::Device::new(
-            &aml::Path::new(format!("S{:03}", self.device_id).as_str()),
+            format!("S{:03}", self.device_id).as_str().into(),
             vec![
                 &aml::Name::new("_SUN".into(), &sun),
                 &aml::Name::new("_ADR".into(), &adr),
@@ -3732,7 +3732,7 @@ impl Aml for VTPMDevice {
         let tpm3 = &aml::Path::new("TPM3");
 
         aml::Device::new(
-            &aml::DeviceName::new("TPM".to_string()),
+            "TPM2".into(),
             vec![
                 &aml::Name::new("_HID".into(), &"MSFT0101"),
                 &aml::Name::new("_STA".into(), &(0xF as usize)),
@@ -3977,7 +3977,7 @@ impl Aml for DeviceManager {
         // PCI hotplug controller
         bytes.extend_from_slice(
             &aml::Device::new(
-                &aml::Path::new("_SB_.PHPR"),
+                "_SB_.PHPR".into(),
                 vec![
                     &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0A06")),
                     &aml::Name::new("_STA".into(), &0x0bu8),
@@ -4125,10 +4125,10 @@ impl Aml for DeviceManager {
         pci_dsdt_inner_data.push(&prt);
 
         let pci_dsdt_data =
-            aml::Device::new(&aml::Path::new("_SB_.PCI0"), pci_dsdt_inner_data).to_aml_bytes();
+            aml::Device::new("_SB_.PCI0".into(), pci_dsdt_inner_data).to_aml_bytes();
 
         let mbrd_dsdt_data = aml::Device::new(
-            &aml::Path::new("_SB_.MBRD"),
+            "_SB_.MBRD".into(),
             vec![
                 &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0C02")),
                 &aml::Name::new("_UID".into(), &aml::ZERO),
@@ -4160,7 +4160,7 @@ impl Aml for DeviceManager {
                 31
             };
         let com1_dsdt_data = aml::Device::new(
-            &aml::Path::new("_SB_.COM1"),
+            "_SB_.COM1".into(),
             vec![
                 &aml::Name::new(
                     "_HID".into(),
@@ -4192,7 +4192,7 @@ impl Aml for DeviceManager {
             aml::Name::new("_S5_".into(), &aml::Package::new(vec![&5u8])).to_aml_bytes();
 
         let power_button_dsdt_data = aml::Device::new(
-            &aml::Path::new("_SB_.PWRB"),
+            "_SB_.PWRB".into(),
             vec![
                 &aml::Name::new("_HID".into(), &aml::EisaName::new("PNP0C0C")),
                 &aml::Name::new("_UID".into(), &aml::ZERO),

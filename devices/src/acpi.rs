@@ -108,7 +108,7 @@ impl BusDevice for AcpiGedDevice {
 impl Aml for AcpiGedDevice {
     fn to_aml_bytes(&self) -> Vec<u8> {
         aml::Device::new(
-            &aml::Path::new("_SB_.GED_"),
+            "_SB_.GED_".into(),
             vec![
                 &aml::Name::new("_HID".into(), &"ACPI0013"),
                 &aml::Name::new("_UID".into(), &aml::ZERO),

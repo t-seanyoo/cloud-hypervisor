@@ -14,7 +14,7 @@ use arch::aarch64::DeviceInfoForFdt;
 #[cfg(target_arch = "aarch64")]
 use arch::DeviceType;
 
-// Output dsdt table
+// Output dsdt table 
 use std::fs::File;
 use std::io::Write;
 
