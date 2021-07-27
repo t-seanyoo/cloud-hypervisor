@@ -160,7 +160,7 @@ pub struct TPMIsa {
     next_locty: u8,
     locs: Vec<TPMLocality>,
     be_buffer_size: usize,
-    cmd: TPMBackendCmd, //IMPLEMENT in new
+    cmd: Option<TPMBackendCmd>, //IMPLEMENT in new
     be_driver: TPMBackend, //IMPLEMENT in new
     be_tpm_version: TPMVersion, //IMPLEMENT in new
     // TPM PPI Object
@@ -333,16 +333,24 @@ impl TPMIsa {
 
     fn tpm_backend_get_tpm_established_flag(&self) -> bool {
         // k->get_tpm_established_flag ? k->get_tpm_established_flag(s) : false;
-        self.be_driver.get_tpm_established_flag()
+        self.be_driver.backend.get_tpm_established_flag()
     }
 
-    fn tpm_backend_reset_tpm_established_flag(&self, locty: u8) -> usize {
+    fn tpm_backend_reset_tpm_established_flag(&self, locty: u8) -> isize {
         // k->reset_tpm_established_flag ? k->reset_tpm_established_flag(s, locty) : 0;
-        self.be_driver.
+        self.be_driver.backend.reset_tpm_established_flag()
     }
 
+    /**
+     * tpm_backend_deliver_request:
+     * @s: the backend to send the request to
+     * @cmd: the command to deliver
+     *
+     * Send a request to the backend. The backend will then send the request
+     * to the TPM implementation.
+     */
     fn tpm_backend_deliver_request(&self, cmd: TPMBackendCmd) {
-        //IMPLEMENT
+        self.be_driver.backend.deliver_request(cmd);
     }
 
     fn tpm_backend_had_startup_error(&self) -> bool {
@@ -510,7 +518,7 @@ impl TPMIsa {
                         self.locs[locty as usize].access |= TPM_TIS_ACCESS_SEIZE;
 
                         set_new_locty = 0;
-                        self.tpm_tis_prep_abort(self.active_locty, locty); //IMPLEMENT
+                        self.tpm_tis_prep_abort(self.active_locty, locty);
                         break;
                     }
                 }
@@ -547,14 +555,14 @@ impl TPMIsa {
                             * request the backend to cancel. Some backends may not
                             * support it
                             */
-                            self.tpm_backend_cancel_cmd(); //IMPLEMENT
+                            self.tpm_backend_cancel_cmd(); 
                         }
                     }
 
                     //ONLY TPM2 Command
                     if val & TPM_TIS_STS_RESET_ESTABLISHMENT_BIT != 0 {
                         if locty == 3 || locty == 4 {
-                            self.tpm_backend_reset_tpm_established_flag(locty); //IMPLEMENT
+                            self.tpm_backend_reset_tpm_established_flag(locty); 
                         }
                     }
 
@@ -585,7 +593,7 @@ impl TPMIsa {
                         match self.locs[locty as usize].state {
                             TPM_TIS_STATE_RECEPTION => {
                                 if (self.locs[locty as usize].sts & TPM_TIS_STS_EXPECT) == 0 {
-                                    self.tpm_tis_tpm_send(locty); //IMPLEMENT
+                                    self.tpm_tis_tpm_send(locty);
                                 }
                             }
                             _ => {},

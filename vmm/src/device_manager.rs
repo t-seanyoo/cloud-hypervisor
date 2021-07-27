@@ -1148,13 +1148,6 @@ impl DeviceManager {
         &self.id_to_dev_info
     }
 
-    // fn add_vtpm_device(
-    //     &mut self,
-    // ) -> DeviceManagerResult<()> {
-
-    //     // Memory Mapped IO + Handlers
-    //     Ok(())
-    // }
 
     #[allow(unused_variables)]
     fn add_pci_devices(
@@ -1580,6 +1573,34 @@ impl DeviceManager {
             .insert(id.clone(), device_node!(id, serial));
 
         Ok(serial)
+    }
+
+    fn add_vtpm_device(
+        &mut self,
+    ) -> DeviceManagerResult<()> {
+
+        // Memory Mapped IO + Handlers
+        let serial_irq = self
+            .address_manager
+            .allocator
+            .lock()
+            .unwrap()
+            .allocate_irq()
+            .unwrap();
+
+        // Must Create VTPM Device...
+        let vtpm = Arc::new(Mutex::new(devices::legacy::TpmIsa::new(
+            interrupt_group,
+            serial_writer,
+        )));
+
+        // Add VTPM Device to mmio
+        self.address_manager
+            .mmio_bus
+            .insert(vtpm.clone(), arch::layout::VTPM_START.0, arch::layout::VTPM_SIZE)
+            .map_err(DeviceManagerError::BusError)?;
+
+        Ok(())
     }
 
     #[cfg(target_arch = "aarch64")]
