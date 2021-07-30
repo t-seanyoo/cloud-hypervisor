@@ -1,8 +1,16 @@
 use crate::tpm_ioctl::{MemberType, Ptm, PtmRes, PtmCap, PtmEst, PtmSetBufferSize, PtmResetEst, PtmLoc, Commands};
-use crate::char::{CharBackend};
+use std::env;
+use std::fmt::{self, Display};
+use std::fs;
+use std::io::{self, Read, Write};
+use std::ops::BitOrAssign;
+use std::path::PathBuf;
+use std::thread;
 use std::mem;
 use std::sync::{Arc, Mutex};
 use std::ptr;
+use crate::tpm::{TPMDevice};
+use crate::char::{CharBackend};
 
 const TPM_TIS_BUFFER_MAX: usize = 4096;
 
@@ -36,11 +44,11 @@ enum TPMType {
 }
 
 pub struct TPMBackendCmd {
-    locty: u8,
-    input: [u8; TPM_TIS_BUFFER_MAX],
-    input_len: u32,
-    output: [u8; TPM_TIS_BUFFER_MAX],
-    output_len: u32,
+    pub locty: u8,
+    pub input: Vec<u8>,
+    pub input_len: u32,
+    pub output: Vec<u8>,
+    pub output_len: u32,
 }
 
 pub trait TPMBackendObject {
@@ -62,6 +70,7 @@ pub struct TPMEmulator {
     version: TPMVersion,
     caps: PtmCap, /* capabilities of the TPM */
     ctrl_chr: CharBackend,
+    // tpm: TPMDevice,
     cur_locty_number: u8, /* last set locality */
     mutex: Arc<Mutex<usize>>,
     established_flag_cached: u8,
@@ -71,12 +80,18 @@ pub struct TPMEmulator {
 impl TPMEmulator {
     pub fn new() -> Self {    
         // tpm_emulator_handle_device_ops
+        let chardev = CharBackend::new();
+        if chardev.chr_fe_init() < 0 {
+            //ERROR: Chardev cannot be initialized
+        }
+
         let res = Self { //IMPLEMENT
             had_startup_error: false,
             cmd: None,
             version: TPMVersion::TpmVersionTwo, // Only TPM2 available
             caps: 0,
-            ctrl_chr: CharBackend::new(),
+            ctrl_chr: chardev,
+            // tpm: TPMDevice::init_simulator(),
             cur_locty_number: u8::MAX,
             mutex: Arc::new(Mutex::new(0)),
             established_flag_cached: 0,
@@ -93,16 +108,11 @@ impl TPMEmulator {
             // ERROR: tpm-emulator: Could not get the TPM established flag:
         }
 
-        if !res.ctrl_chr.chr_fe_init() {
-            res.had_startup_error = true;
-            // ERROR: tpm-emulator: Couldn not start Chardev
-        }
-
         res
     }
 
     fn tpm_emulator_probe_caps(&self) -> isize { 
-        if self.tpm_emulator_ctrlcmd(Commands::CmdGetCapability, &self.caps, 0, self.caps.get_size()) < 0 {
+        if self.tpm_emulator_ctrlcmd(Commands::CmdGetCapability, &self.caps, 0, mem::size_of::<u64>()) < 0 {
             return -1;
         }
 
@@ -145,40 +155,64 @@ impl TPMEmulator {
     }
 
     fn tpm_emulator_ctrlcmd<'a>(&self, cmd: Commands, msg: &'a dyn Ptm, msg_len_in: usize, msg_len_out: usize) -> isize {
-        let dev: CharBackend = self.ctrl_chr;
+        // let dev: TPMDevice = self.tpm;
+        let dev: CharBackend;
         let cmd_no = (cmd as u32).to_be_bytes();
         let n: isize = (mem::size_of::<u32>() + msg_len_in) as isize;
         let size_of_cmd_no: usize = mem::size_of::<u32>();
 
-        let mut converted_msg = msg.convert_to_bytes();
+        let mut converted_req = msg.convert_to_reqbytes();
+
+        // let mut input_buf; //Create command buf
 
         /* Lock object for scope */
         let mut guard = self.mutex.lock().unwrap();
         {
+            /* ASSUME COMMAND IS CORRECT UP TO THIS POINT */
+            // let command = TPMBackendCmd {
+            //     locty: 0,
+            //     input: input_buf,
+            //     input_len: msg_len_in as u32,
+            //     output: Vec::<u8>::new(),
+            //     output_len: msg_len_out as u32,
+            // };
+            
+            // let len = match dev.perform_work_from_cmd(&mut command) {
+            //     Ok(len) => len,
+            //         Err(err) => {
+            //             std::mem::drop(guard);
+            //             return -1;
+            //         }
+            // };
+
             let mut buf = Vec::<u8>::with_capacity(n as usize);
             
             let dst_ptr = buf.as_mut_ptr();
             let cmdno_ptr = cmd_no.as_ptr();
+            //COnfirm if buffer is less than size
             ptr::copy_nonoverlapping(cmdno_ptr, dst_ptr, size_of_cmd_no);
 
-            let msg_ptr = converted_msg.as_ptr();
+            let msg_ptr = converted_req.as_ptr();
             dst_ptr = dst_ptr.offset(size_of_cmd_no as isize);
             ptr::copy_nonoverlapping(msg_ptr, dst_ptr, msg_len_in);
             // memcpy(buf, &cmd_no, sizeof(cmd_no));
             // memcpy(buf + sizeof(cmd_no), msg, msg_len_in);
 
-            n = dev.chr_fe_write_all(buf, buf.len());
+            n = dev.chr_fe_write_all(&mut buf, n as usize);
             if n <= 0 {
                 std::mem::drop(guard);
                 return -1;
             }
 
+            let mut output = [0 as u8; TPM_TIS_BUFFER_MAX];
+
             if msg_len_out != 0 {
-                n = dev.chr_fe_read_all(&mut converted_msg, msg_len_out);
+                n = dev.chr_fe_read_all(&mut output, msg_len_out);
                 if n <= 0 {
                     std::mem::drop(guard);
                     return -1;
                 }
+                msg.convert_to_ptm(&output);
             }
         }
         std::mem::drop(guard);
@@ -188,7 +222,7 @@ impl TPMEmulator {
     fn tpm_emulator_stop_tpm(&self) -> isize {
         let res: PtmRes = 0;
 
-        if self.tpm_emulator_ctrlcmd(Commands::CmdStop, &res, 0, res.get_size()) < 0 {
+        if self.tpm_emulator_ctrlcmd(Commands::CmdStop, &res, 0, mem::size_of::<u32>()) < 0 {
             // error_report("tpm-emulator: Could not stop TPM: %s", strerror(errno));
             return -1;
         }
@@ -213,14 +247,14 @@ impl TPMEmulator {
 
         psbs.req.buffersize = (wantedsize as u32).to_be();
 
-        if self.tpm_emulator_ctrlcmd(Commands::CmdSetBufferSize, &psbs, mem::size_of::<u32>(), psbs.get_size()) < 0 {
+        if self.tpm_emulator_ctrlcmd(Commands::CmdSetBufferSize, &psbs, mem::size_of::<u32>(), 4*mem::size_of::<u32>()) < 0 {
             //error_report("tpm-emulator: Could not set buffer size: %s", strerror(errno));
             return -1;
         }
 
-        psbs.resp.tpm_result = u32::from_be(psbs.resp.tpm_result);
+        psbs.tpm_result = u32::from_be(psbs.tpm_result);
 
-        if psbs.resp.tpm_result != 0 {
+        if psbs.tpm_result != 0 {
             // error_report("tpm-emulator: TPM result for set buffer size : 0x%x %s",
             //          psbs.u.resp.tpm_result,
             //          tpm_emulator_strerror(psbs.u.resp.tpm_result));
@@ -252,7 +286,7 @@ impl TPMBackendObject for TPMEmulator {
             return self.established_flag == 1
         }
 
-        if self.tpm_emulator_ctrlcmd(Commands::CmdGetTpmEstablished, &est, 0, est.get_size()) < 0 {
+        if self.tpm_emulator_ctrlcmd(Commands::CmdGetTpmEstablished, &est, 0, 2*mem::size_of::<u32>()) < 0 {
             // error_report("tpm-emulator: Could not get the TPM established flag: %s",
             //         strerror(errno));
             return false;
@@ -275,13 +309,13 @@ impl TPMBackendObject for TPMEmulator {
         }
 
         reset_est.req.loc = self.cur_locty_number;
-        if self.tpm_emulator_ctrlcmd(Commands::CmdResetTpmEstablished, &reset_est, reset_est.get_size(), reset_est.get_size()) < 0 {
+        if self.tpm_emulator_ctrlcmd(Commands::CmdResetTpmEstablished, &reset_est, mem::size_of::<u32>(), mem::size_of::<u32>()) < 0 {
             // error_report("tpm-emulator: Could not reset the establishment bit: %s",
             //          strerror(errno));
             return -1;
         }
 
-        res = u32::from_be(reset_est.resp.tpm_result);
+        res = u32::from_be(reset_est.tpm_result);
         if res != 0 {
             // error_report(
             //     "tpm-emulator: TPM result for rest established flag: 0x%x %s",
@@ -313,7 +347,7 @@ impl TPMBackendObject for TPMEmulator {
         }
 
         /* FIXME: make the function non-blocking, or it may block a VCPU */
-        if self.tpm_emulator_ctrlcmd(Commands::CmdCancelTpmCmd, &res, 0, res.get_size()) < 0 {
+        if self.tpm_emulator_ctrlcmd(Commands::CmdCancelTpmCmd, &res, 0, mem::size_of::<u32>()) < 0 {
             // error_report("tpm-emulator: Could not cancel command: %s",strerror(errno));
         } else if res != 0 {
             // error_report("tpm-emulator: Failed to cancel TPM: 0x%x", be32_to_cpu(res));
@@ -331,20 +365,38 @@ impl TPMBackendObject for TPMEmulator {
 
             loc.req.loc = cmd.locty;
 
-            if self.tpm_emulator_ctrlcmd(Commands::CmdSetLocality, &loc, loc.get_size(), loc.get_size())
+            if self.tpm_emulator_ctrlcmd(Commands::CmdSetLocality, &loc, mem::size_of::<u32>(), mem::size_of::<u32>()) < 0 {
+                // error_setg(errp, "tpm-emulator: could not set locality : %s",
+                //    strerror(errno));
+                return -1
+            }
+
+            loc.tpm_result = u32::from_be(loc.tpm_result);
+            if loc.tpm_result != 0 {
+                // error_setg(errp, "tpm-emulator: TPM result for set locality : 0x%x",
+                //    loc.u.resp.tpm_result);
+                return -1
+            }
+
+            self.cur_locty_number = cmd.locty;
+
+            0
     
         } else {
-            return -1
+            -1
         }
 
         
 
     }
 
+    fn unix_tx_bufs() -> isize {
+
+    }
+
     fn handle_request(&self) -> isize {
         if self.set_locality() < 0 || self.unix_tx_bufs() < 0 {
-            self.tpm_util_write_fatal_error_response();
-            return -1;
+            return -1
         }
 
         return 0

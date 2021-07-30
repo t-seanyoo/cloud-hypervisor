@@ -1,149 +1,100 @@
-use crate::chario::{IOChannel};
 use std::sync::{Arc, Mutex};
 use std::cmp;
+use std::io;
+use std::io::{BufRead, BufReader};
+use std::os::unix::net::{UnixStream,UnixListener};
+use std::thread;
+use std::time::{Duration, Instant};
+use std::thread::sleep;
+use std::str;
+use std::io::prelude::*;
+use std::io::Write;
+
+const TPM_TIS_BUFFER_MAX: usize = 4096;
+
+type Result<T> = std::result::Result<T, Error>;
+
+/// Copy data in `from` into `to`, until the shortest
+/// of the two slices.
+///
+/// Return the number of bytes written.
+fn byte_copy(from: &[u8], mut to: &mut [u8]) -> usize {
+    to.write(from).unwrap()
+}
 
 #[derive(PartialEq)]
-enum TCPChardevState {
-    TcpChardevStateDisconnected,
-    TcpChardevStateConnecting,
-    TcpChardevStateConnected,
+enum ChardevState {
+    ChardevStateDisconnected,
+    ChardevStateConnecting,
+    ChardevStateConnected,
 }
 
 pub struct SocketCharDev {
-    state: TCPChardevState,
-    ioc: ,
-    write_msgfds: ,
-    write_msgfds_num: usize,
-    read_msgfds: ,
-    read_msgfds_num: usize,
+    state: ChardevState,
+    stream: Option<UnixStream>,
     chr_write_lock: Arc<Mutex<usize>>,
 }
 
 impl SocketCharDev {
     pub fn new() -> Self {
         Self {
-            chr_write_lock: Arc::new(Mutex::new(0)),
+            state: ChardevState::ChardevStateDisconnected,
+            stream: None,
+            chr_write_lock: Arc::new(Mutex::new(0))
         }
     }
 
-    /* NB may be called even if tcp_chr_connect has not been
-    * reached, due to TLS or telnet initialization failure,
-    * so can *not* assume s->state == TCP_CHARDEV_STATE_CONNECTED
-    * This must be called with chr->chr_write_lock held.
-    */
-    pub fn tcp_chr_disconnect_locked(&self) {
+    pub fn connect(&self, socket_path: &str) -> isize {
+        let now = Instant::now();
+
+        // Retry connecting for a full minute
+        let err = loop {
+            let err = match UnixStream::connect(socket_path) {
+                Ok(s) => {
+                    self.stream = Some(s);
+                    self.state = ChardevState::ChardevStateConnected;
+                    return 0
+                }
+                Err(e) => e,
+            };
+            sleep(Duration::from_millis(100));
+
+            if now.elapsed().as_secs() >= 60 {
+                break err;
+            }
+        };
         
+        // error!(
+        //     "Failed connecting the backend after trying for 1 minute: {:?}",
+        //     err
+        // );
+        -1
     }
 
-    pub fn tcp_chr_disconnect(&self) {
-        let mut guard = self.chr_write_lock.lock().unwrap();
-        self.tcp_chr_disconnect_locked();
-        std::mem::drop(guard);
-    }
-
-    pub fn tcp_chr_sync_read(&self, offset: isize, buf: &mut Vec<u8>, len: usize) -> isize{
-        let size: isize;
-        if self.state != TCPChardevState::TcpChardevStateConnected {return 0}
-
-        // Set blocking mode true
-        size = self.tcp_chr_recv();
-        if self.state != TCPChardevState::TcpChardevStateDisconnected {
-            // Set blocking mode false
-        }
-
-        if size == 0 {
-            self.tcp_chr_disconnect();
-        }
-
-        size
-    }
-
-    pub fn tcp_chr_write(&self, buf: Vec<u8>, offset: isize, len: usize) -> isize {
-        if self.state == TCPChardevState::TcpChardevStateConnected {
-            let ret = ioc.io_channel_send_full(buf, len, self.write_msgfds, self.write_msgfds_num);
-            if !(ret < 0) && self.write_msgfds_num != 0 {
-                self.write_msgfds_num = 0;
-                self.write_msgfds = 0;
-            }
-
-            if ret < 0 {
-                if self.tcp_chr_read_poll() <= 0 {
-                    /* Perform disconnect and return error. */
-                    self.tcp_chr_disconnect_locked();
-                } /* else let the read handler finish it properly */
-            }
-
-            ret
+    pub fn chr_write(&self, buf: &mut [u8], len:usize) -> isize {
+        
+        if let Some(sock) = self.stream {
+            /* Lock object for scope */
+            let mut guard = self.chr_write_lock.lock().unwrap();
+            sock.write_all(&buf);
+            std::mem::drop(guard);
+            0
         } else {
             -1
         }
     }
 
-    pub fn chr_write_buffer(&self, buf: Vec<u8>, len: usize, offset: &mut isize) -> isize {
-        let res = 0;
-        *offset = 0;
-
-        /* Lock object for scope */
-        let mut guard = self.chr_write_lock.lock().unwrap();
-        {
-            while *offset < len as isize {
-                res = self.tcp_chr_write(buf, *offset, (len as isize - *offset) as usize);
-
-                if res <= 0 {
-                    break;
-                }
-
-                *offset += res;
-            }
+    pub fn chr_read(&self, buf: &mut [u8], len: usize) -> isize {
+        //Grab all response bytes so none is left behind
+        let mut newbuf: &[u8] = &[0; TPM_TIS_BUFFER_MAX];
+        
+        if let Some(sock) = self.stream {
+            sock.read(&mut newbuf);
+            byte_copy(&newbuf, buf);
+            0
+        } else {
+            -1
         }
-        // if (*offset > 0) {
-        //     /*
-        //      * If some data was written by backend, we should
-        //      * only log what was actually written. This method
-        //      * may be invoked again to write the remaining
-        //      * method, thus we'll log the remainder at that time.
-        //      */
-        //     qemu_chr_write_log(s, buf, *offset);
-        // } else if (res < 0) {
-        //     /*
-        //      * If a fatal error was reported by the backend,
-        //      * assume this method won't be invoked again with
-        //      * this buffer, so log it all right away.
-        //      */
-        //     qemu_chr_write_log(s, buf, len);
-        // }
-
-        std::mem::drop(guard);
-        res
-    }
-
-    pub fn chr_write(&self, buf: Vec<u8>, len: usize) -> isize {
-        let offset = 0;
-        let res: isize;
-
-        res = self.chr_write_buffer(buf, len, &mut offset);
-
-        if res < 0 {
-            return res
-        }
-
-        offset
-    }
-
-    pub fn tcp_get_msgfds(&self, fds: &mut Vec<isize>, len: usize) -> isize {
-        let to_copy = cmp::min(len, self.read_msgfds_num);
-
-        if len <= 16 {
-            return -1
-        }
-
-        if to_copy != 0 {
-            let dst_ptr = fds.as_mut_ptr();
-            let src_ptr = self.read_msgfds.as_ptr();
-            ptr::copy_nonoverlapping(src_ptr, dst_ptr, to_copy*2)
-        }
-
-        to_copy as isize
     }
 }
 
@@ -156,44 +107,40 @@ impl CharBackend {
     pub fn new() -> Self {
         Self {
             chr: None,
+            fe_open: false,
         }
     }
 
-    pub fn chr_fe_get_msgfds(&self, fds: &mut Vec<isize>, len: usize) -> isize {
+    pub fn chr_fe_init(&self) -> isize {
+        let sockdev = SocketCharDev::new();
+
+        let res = sockdev.connect("/tmp/mytpm1/swtpm-sock");
+        self.chr = Some(sockdev);
+        if res < 0 {
+            return -1
+        }
+        
+        self.fe_open = true;
+        0
+    }
+
+    /**
+     * qemu_chr_fe_write_all:
+     * @buf: the data
+     * @len: the number of bytes to send
+     *
+     * Write data to a character backend from the front end.  This function will
+     * send data from the front end to the back end.  Unlike @chr_fe_write,
+     * this function will block if the back end cannot consume all of the data
+     * attempted to be written.  This function is thread-safe.
+     *
+     * Returns: the number of bytes consumed (0 if no associated Chardev)
+     */
+    pub fn chr_fe_write_all(&self, buf: &mut [u8], len: usize) -> isize {
         if let Some(dev) = self.chr {
-            dev.tcp_get_msgfds(&mut fds, len)
+            dev.chr_write(&mut buf, len)
         } else {
             -1
-        }
-    }
-
-    pub fn chr_fe_get_msgfd(&self) -> isize {
-        let mut fd = Vec::new();
-        let res = self.chr_fe_get_msgfds(&mut fd, 1);
-    }
-
-    pub fn chr_fe_init(&self) -> bool {
-        let tag = 0;
-        
-        self.chr = Some(SocketCharDev {
-            state: TCPChardevState::TcpChardevStateDisconnected,
-            ioc: ,
-            write_msgfds: ,
-            write_msgfds_num: ,
-            read_msgfds: ,
-            read_msgfds_num: ,
-            chr_write_lock: Arc::new(Mutex::new(0))>,
-        });
-        
-        
-        self.fe_open = false;
-        true
-    }
-
-    pub fn chr_fe_write_all(&self, buf: Vec<u8>, len: usize) -> isize {
-        match self.chr {
-            None => return 0,
-            Some(x) => x.chr_write(buf, len)
         }
     }
 
@@ -207,31 +154,17 @@ impl CharBackend {
      *
      * Returns: the number of bytes read (0 if no associated Chardev)
      */
-    pub fn chr_fe_read_all(&self, buf: &mut Vec<u8>, len: usize) -> isize {
-        let offset: isize = 0;
-        let res: isize;
-
+    pub fn chr_fe_read_all(&self, buf: &mut [u8], len: usize) -> isize {
         if let Some(dev) = self.chr {
-            while offset < len as isize {
-                res = dev.tcp_chr_sync_read(offset, &mut buf, len);
-                //thread g_usleep(100)
-    
-                if res == 0 {
-                    break;
-                }
-    
-                if res < 0 {
-                    return res;
-                }
-    
-                offset += res
-            }
-    
-            offset
+            dev.chr_read(&mut buf, len)
         } else {
-            0
+            -1
         }
     }
 
 
+}
+
+pub enum Error {
+    BindSocket()
 }

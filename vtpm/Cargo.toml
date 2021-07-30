@@ -7,3 +7,5 @@ edition = "2018"
 
 [dependencies]
 byteorder = "1.4.3"
+virtio-devices = { path = "../virtio-devices" }
+tpm2 = { path = "../tpm2"}

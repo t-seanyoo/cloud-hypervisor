@@ -10,9 +10,9 @@ use vm_migration::{
     Migratable, MigratableError, Pausable, Snapshot, Snapshottable, Transportable, VersionMapped,
 };
 use std::cmp;
-use vtpm::{
-    TPMVersion, TPMType, TPMBackendCmd, TPMBackendObject, TPMEmulator, TPMBackend,
-};
+// use vtpm::{
+//     TPMVersion, TPMType, TPMBackendCmd, TPMBackendObject, TPMEmulator, TPMBackend,
+// };
 
 /* Costants */
 const TPM_TIS_NUM_LOCALITIES: u8 = 5;
@@ -143,7 +143,7 @@ impl Clone for TPMLocality {
 }
 
 pub struct TPMState {
-    buffer: [u8; TPM_TIS_BUFFER_MAX as usize],
+    buffer: Vec<u8>,
     rw_offset: u16,
     active_locty: u8,
     aborting_locty: u8,
@@ -153,7 +153,7 @@ pub struct TPMState {
 
 /// TPM Device
 pub struct TPMIsa {
-    buffer: [u8; TPM_TIS_BUFFER_MAX as usize],
+    buffer: Vec<u8>,
     rw_offset: u16,
     active_locty: u8,
     aborting_locty: u8,
@@ -192,7 +192,7 @@ impl TPMIsa {
             });
         }
         Self {
-            buffer: [0u8; buffersize], //IMPLEMENT
+            buffer: Vec::<u8>::new(), //IMPLEMENT
             rw_offset: 0,
             active_locty: TPM_TIS_NO_LOCALITY,
             aborting_locty: TPM_TIS_NO_LOCALITY,

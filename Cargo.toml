@@ -78,6 +78,8 @@ members = [
     "pci",
     "qcow",
     "rate_limiter",
+    "tpm2",
+    "tpm2-sys",
     "vhost_user_backend",
     "vhost_user_block",
     "vhost_user_net",
@@ -87,6 +89,6 @@ members = [
     "vm-device",
     "vm-migration",
     "vm-virtio",
-    "vtpm"
+    "vtpm",
 ]
 exclude = ["test_infra"]
