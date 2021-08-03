@@ -9,6 +9,10 @@ use std::thread::sleep;
 use std::str;
 use std::io::prelude::*;
 use std::io::Write;
+use std::os::unix::io::{RawFd, AsRawFd};
+use nix::unistd::{read, write};
+use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag, sendmsg};
+use nix::sys::uio::IoVec;
 
 const TPM_TIS_BUFFER_MAX: usize = 4096;
 
@@ -32,6 +36,9 @@ enum ChardevState {
 pub struct SocketCharDev {
     state: ChardevState,
     stream: Option<UnixStream>,
+    write_msgfd: RawFd,
+    ctrl_fd: RawFd,
+    data_ioc: RawFd,
     chr_write_lock: Arc<Mutex<usize>>,
 }
 
@@ -40,11 +47,18 @@ impl SocketCharDev {
         Self {
             state: ChardevState::ChardevStateDisconnected,
             stream: None,
+            write_msgfd: -1,
+            /* Control Channel */
+            ctrl_fd: -1,
+            /* Command Channel */
+            data_ioc: -1,
             chr_write_lock: Arc::new(Mutex::new(0))
         }
     }
 
     pub fn connect(&self, socket_path: &str) -> isize {
+        self.state = ChardevState::ChardevStateConnecting;
+
         let now = Instant::now();
 
         // Retry connecting for a full minute
@@ -53,6 +67,7 @@ impl SocketCharDev {
                 Ok(s) => {
                     self.stream = Some(s);
                     self.state = ChardevState::ChardevStateConnected;
+                    self.ctrl_fd = s.as_raw_fd();
                     return 0
                 }
                 Err(e) => e,
@@ -71,13 +86,57 @@ impl SocketCharDev {
         -1
     }
 
+    pub fn set_dataioc(&self, fd: RawFd) {
+        self.data_ioc = fd;
+    }
+
+    pub fn set_msgfd(&self, fd: RawFd){
+        self.write_msgfd = fd;
+    }
+
+    pub fn ioc_channel_send_full(&self, buf: &mut [u8], len: usize) -> isize {
+        let offset = 0;
+
+        let iov = &[IoVec::from_slice(buf)];
+        sendmsg(self.write_msgfd, iov, cmsgs: &[ControlMessage], flags: MsgFlags, addr: Option<&SockAddr>);
+
+        0
+
+    }
+
+    pub fn tcp_chr_write(&self, buf: &mut [u8], len: usize) -> isize {
+        if self.state == ChardevState::ChardevStateConnected {
+            let ret = self.ioc_channel_send_full(buf, len);
+
+            ret
+        } else {
+            -1
+        }
+    }
+
+    pub fn chr_write_buffer(&self, buf: &mut [u8], len:usize, offset: &mut usize) -> isize {
+        *offset = 0;
+        let res = 0;
+        
+        let mut guard = self.chr_write_lock.lock().unwrap();
+        {
+            res = self.tcp_chr_write(buf, len);
+        }
+        std::mem::drop(guard);
+        0
+    }
+
     pub fn chr_write(&self, buf: &mut [u8], len:usize) -> isize {
         
         if let Some(sock) = self.stream {
-            /* Lock object for scope */
-            let mut guard = self.chr_write_lock.lock().unwrap();
-            sock.write_all(&buf);
-            std::mem::drop(guard);
+            let mut offset = 0;
+
+            let res = self.chr_write_buffer(buf, len, &mut offset);
+
+            // /* Lock object for scope */
+            // let mut guard = self.chr_write_lock.lock().unwrap();
+            // sock.write_all(&buf);
+            // std::mem::drop(guard);
             0
         } else {
             -1
@@ -122,6 +181,24 @@ impl CharBackend {
         
         self.fe_open = true;
         0
+    }
+
+    pub fn chr_fe_set_msgfd(&self, fd: RawFd) -> isize {
+        if let Some(dev) = self.chr {
+            dev.set_msgfd(fd);
+            0
+        } else {
+            -1
+        }
+    }
+
+    pub fn chr_fe_set_dataioc(&self, fd: RawFd) -> isize {
+        if let Some(dev) = self.chr {
+            dev.set_dataioc(fd);
+            0
+        } else {
+            -1
+        }
     }
 
     /**

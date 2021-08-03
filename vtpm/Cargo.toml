@@ -9,3 +9,5 @@ edition = "2018"
 byteorder = "1.4.3"
 virtio-devices = { path = "../virtio-devices" }
 tpm2 = { path = "../tpm2"}
+filedescriptor = "0.8.0"
+nix = "0.22.0"

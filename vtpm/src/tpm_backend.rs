@@ -1,3 +1,5 @@
+extern crate nix;
+
 use crate::tpm_ioctl::{MemberType, Ptm, PtmRes, PtmCap, PtmEst, PtmSetBufferSize, PtmResetEst, PtmLoc, Commands};
 use std::env;
 use std::fmt::{self, Display};
@@ -11,6 +13,9 @@ use std::sync::{Arc, Mutex};
 use std::ptr;
 use crate::tpm::{TPMDevice};
 use crate::char::{CharBackend};
+use std::option::Option;
+use nix::unistd::{read, write};
+use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag};
 
 const TPM_TIS_BUFFER_MAX: usize = 4096;
 
@@ -98,6 +103,11 @@ impl TPMEmulator {
             established_flag: 0,
         };
 
+        if res.tpm_emulator_prepare_data_fd() < 0 {
+            res.had_startup_error = true;
+            //ERROR: Data FD Creation Error
+        }
+
         if res.tpm_emulator_probe_caps() | res.tpm_emulator_check_caps() != 0 {
             res.had_startup_error = true;
             // ERROR: tpm-emulator: caps errors
@@ -109,6 +119,22 @@ impl TPMEmulator {
         }
 
         res
+    }
+
+    fn tpm_emulator_prepare_data_fd(&self) -> isize {
+        let res: PtmRes;
+
+        let (fd1, fd2) = socketpair(AddressFamily::Unix, SockType::Stream, None, SockFlag::empty())
+                     .expect("tpm_emulator: Error making socketpair");
+        if self.ctrl_chr.chr_fe_set_msgfd(fd2) < 0 {
+            return -1;
+        }
+
+        if self.ctrl_chr.chr_fe_set_dataioc(fd1) < 0 {
+            return -1;
+        }
+
+        0
     }
 
     fn tpm_emulator_probe_caps(&self) -> isize { 
