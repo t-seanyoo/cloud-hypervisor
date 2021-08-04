@@ -130,6 +130,13 @@ impl TPMEmulator {
             return -1;
         }
 
+        if self.tpm_emulator_ctrlcmd(Commands::CmdSetDatafd, &res, 0, mem::size_of::<u32>()) < 0 {
+            // error_report("tpm-emulator: Failed to send CMD_SET_DATAFD: %s",
+            //          strerror(errno));
+            // goto err_exit;
+            return -1
+        }
+
         if self.ctrl_chr.chr_fe_set_dataioc(fd1) < 0 {
             return -1;
         }

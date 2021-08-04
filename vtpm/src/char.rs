@@ -11,7 +11,7 @@ use std::io::prelude::*;
 use std::io::Write;
 use std::os::unix::io::{RawFd, AsRawFd};
 use nix::unistd::{read, write};
-use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag, sendmsg};
+use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag, sendmsg, recvmsg, ControlMessage, MsgFlags };
 use nix::sys::uio::IoVec;
 
 const TPM_TIS_BUFFER_MAX: usize = 4096;
@@ -37,7 +37,9 @@ pub struct SocketCharDev {
     state: ChardevState,
     stream: Option<UnixStream>,
     write_msgfd: RawFd,
+    /* Control Channel */
     ctrl_fd: RawFd,
+    /* Command Channel */
     data_ioc: RawFd,
     chr_write_lock: Arc<Mutex<usize>>,
 }
@@ -48,9 +50,7 @@ impl SocketCharDev {
             state: ChardevState::ChardevStateDisconnected,
             stream: None,
             write_msgfd: -1,
-            /* Control Channel */
             ctrl_fd: -1,
-            /* Command Channel */
             data_ioc: -1,
             chr_write_lock: Arc::new(Mutex::new(0))
         }
@@ -94,50 +94,55 @@ impl SocketCharDev {
         self.write_msgfd = fd;
     }
 
-    pub fn ioc_channel_send_full(&self, buf: &mut [u8], len: usize) -> isize {
+    pub fn chr_sync_read(&self, buf: &mut [u8], len: usize) -> isize {
+        if self.state != ChardevState::ChardevStateConnected {
+            return 0
+        }
+
+        let iov = &[IoVec::from_mut_slice(buf)];
+
+        let msg = recvmsg(self.ctrl_fd, iov, None, MsgFlags::empty()).expect("char.rs: sync_read recvmsg error");
+    }
+
+    pub fn send_full(&self, buf: &mut [u8], len: usize) -> isize {
         let offset = 0;
 
         let iov = &[IoVec::from_slice(buf)];
-        sendmsg(self.write_msgfd, iov, cmsgs: &[ControlMessage], flags: MsgFlags, addr: Option<&SockAddr>);
+        let cmsgs = &[ControlMessage::ScmRights(&[self.write_msgfd])];
 
-        0
-
-    }
-
-    pub fn tcp_chr_write(&self, buf: &mut [u8], len: usize) -> isize {
-        if self.state == ChardevState::ChardevStateConnected {
-            let ret = self.ioc_channel_send_full(buf, len);
-
-            ret
-        } else {
-            -1
-        }
-    }
-
-    pub fn chr_write_buffer(&self, buf: &mut [u8], len:usize, offset: &mut usize) -> isize {
-        *offset = 0;
-        let res = 0;
-        
-        let mut guard = self.chr_write_lock.lock().unwrap();
-        {
-            res = self.tcp_chr_write(buf, len);
-        }
-        std::mem::drop(guard);
-        0
+        sendmsg(self.ctrl_fd, iov, cmsgs, MsgFlags::empty(), None).expect("char.rs: ERROR ON send_full sendmsg") as isize
     }
 
     pub fn chr_write(&self, buf: &mut [u8], len:usize) -> isize {
-        
+        let res = 0;
+
         if let Some(sock) = self.stream {
-            let mut offset = 0;
+            let mut guard = self.chr_write_lock.lock().unwrap();
+            {
+                let res = match self.state {
+                    ChardevState::ChardevStateConnected => {
+                        let ret = self.send_full(buf, len);
+                        /* free the written msgfds in any cases
+                        * other than ret < 0 */
+                        if ret < 0 {
+                            self.write_msgfd = 0;
+                        }
 
-            let res = self.chr_write_buffer(buf, len, &mut offset);
+                        // if (ret < 0 && errno != EAGAIN) {
+                        //     if (tcp_chr_read_poll(chr) <= 0) {
+                        //         /* Perform disconnect and return error. */
+                        //         tcp_chr_disconnect_locked(chr);
+                        //     } /* else let the read handler finish it properly */
+                        // }
 
-            // /* Lock object for scope */
-            // let mut guard = self.chr_write_lock.lock().unwrap();
-            // sock.write_all(&buf);
-            // std::mem::drop(guard);
-            0
+                        ret
+                    }
+                    _ => -1,
+                };
+            }
+            std::mem::drop(guard);
+
+            res
         } else {
             -1
         }
@@ -233,6 +238,7 @@ impl CharBackend {
      */
     pub fn chr_fe_read_all(&self, buf: &mut [u8], len: usize) -> isize {
         if let Some(dev) = self.chr {
+            dev.chr_sync_read(&mut buf, len);
             dev.chr_read(&mut buf, len)
         } else {
             -1
