@@ -48,14 +48,14 @@ impl Ptm for PtmRes {
             return -1
         }
         let num_buf: &[u8; 4] = buf[0..4].try_into().expect("PtmRes convert to req");
-        let mut num: &mut u32 = &mut u32::from_be_bytes(*num_buf);
+        let num: &mut u32 = &mut u32::from_be_bytes(*num_buf);
         *self = *num;
         0
     }
 
-    fn set_mem(&mut self, mem:MemberType) {}
+    fn set_mem(&mut self, _mem:MemberType) {}
 
-    fn set_res(&mut self, res: u32) {}
+    fn set_res(&mut self, _res: u32) {}
 }
 
 pub type PtmCap = u64;
@@ -75,9 +75,9 @@ impl Ptm for PtmCap {
         0
     }
 
-    fn set_mem(&mut self, mem:MemberType) {}
+    fn set_mem(&mut self, _mem:MemberType) {}
 
-    fn set_res(&mut self, res: u32) {}
+    fn set_res(&mut self, _res: u32) {}
 }
 
 /* PTM_GET_TPMESTABLISHED: get the establishment bit */
