@@ -208,7 +208,7 @@ impl Ptm for PtmSetBufferSize {
 /* PTM_RESET_TPMESTABLISHED: reset establishment bit */
 #[derive(Debug)]
 pub struct PtmResEstReq {
-    pub loc: u8, /* locality to use */
+    pub loc: i8, /* locality to use */
 }
 
 #[derive(Debug)]
@@ -260,7 +260,7 @@ impl Ptm for PtmResetEst {
 /* PTM_SET_LOCALITY */
 #[derive(Debug)]
 pub struct PtmLocReq {
-    pub loc: u8,
+    pub loc: i8,
 }
 
 #[derive(Debug)]

@@ -11,8 +11,9 @@ use std::io::prelude::*;
 use std::io::Write;
 use std::os::unix::io::{RawFd, AsRawFd};
 use nix::unistd::{read, write};
-use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag, sendmsg, recvmsg, ControlMessage, MsgFlags };
+use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag, sendmsg, recvfrom, ControlMessage, MsgFlags };
 use nix::sys::uio::IoVec;
+use libc;
 
 const TPM_TIS_BUFFER_MAX: usize = 4096;
 
@@ -86,11 +87,11 @@ impl SocketCharDev {
         -1
     }
 
-    pub fn set_dataioc(&self, fd: RawFd) {
+    pub fn set_dataioc(&mut self, fd: RawFd) {
         self.data_ioc = fd;
     }
 
-    pub fn set_msgfd(&self, fd: RawFd){
+    pub fn set_msgfd(&mut self, fd: RawFd){
         self.write_msgfd = fd;
     }
 
@@ -98,10 +99,9 @@ impl SocketCharDev {
         if self.state != ChardevState::ChardevStateConnected {
             return 0
         }
-
-        let iov = &[IoVec::from_mut_slice(buf)];
-
-        let msg = recvmsg(self.ctrl_fd, iov, None, MsgFlags::empty()).expect("char.rs: sync_read recvmsg error");
+        //SET BLOCKING
+        let (size, _) = recvfrom(self.ctrl_fd, buf).expect("char.rs: sync_read recvmsg error");
+        size as isize
     }
 
     pub fn send_full(&self, buf: &mut [u8], len: usize) -> isize {
@@ -238,8 +238,7 @@ impl CharBackend {
      */
     pub fn chr_fe_read_all(&self, buf: &mut [u8], len: usize) -> isize {
         if let Some(dev) = self.chr {
-            dev.chr_sync_read(&mut buf, len);
-            dev.chr_read(&mut buf, len)
+            dev.chr_sync_read(&mut buf, len)
         } else {
             -1
         }
