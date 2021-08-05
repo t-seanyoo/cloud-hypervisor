@@ -57,7 +57,7 @@ impl SocketCharDev {
         }
     }
 
-    pub fn connect(&self, socket_path: &str) -> isize {
+    pub fn connect(&mut self, socket_path: &str) -> isize {
         self.state = ChardevState::ChardevStateConnecting;
 
         let now = Instant::now();
@@ -66,9 +66,10 @@ impl SocketCharDev {
         let err = loop {
             let err = match UnixStream::connect(socket_path) {
                 Ok(s) => {
+                    let fd = s.as_raw_fd();
+                    self.ctrl_fd = fd;
                     self.stream = Some(s);
                     self.state = ChardevState::ChardevStateConnected;
-                    self.ctrl_fd = s.as_raw_fd();
                     return 0
                 }
                 Err(e) => e,
@@ -105,21 +106,21 @@ impl SocketCharDev {
     }
 
     pub fn send_full(&self, buf: &mut [u8], len: usize) -> isize {
-        let offset = 0;
-
         let iov = &[IoVec::from_slice(buf)];
-        let cmsgs = &[ControlMessage::ScmRights(&[self.write_msgfd])];
+        let write_fd = self.write_msgfd;
+        let write_vec = &[write_fd];
+        let cmsgs = &[ControlMessage::ScmRights(write_vec)];
 
         sendmsg(self.ctrl_fd, iov, cmsgs, MsgFlags::empty(), None).expect("char.rs: ERROR ON send_full sendmsg") as isize
     }
 
-    pub fn chr_write(&self, buf: &mut [u8], len:usize) -> isize {
-        let res = 0;
+    pub fn chr_write(&mut self, buf: &mut [u8], len:usize) -> isize {
+        let mut res = 0;
 
-        if let Some(sock) = self.stream {
-            let mut guard = self.chr_write_lock.lock().unwrap();
+        if let Some(ref mut sock) = self.stream {
+            let guard = self.chr_write_lock.lock().unwrap();
             {
-                let res = match self.state {
+                res = match self.state {
                     ChardevState::ChardevStateConnected => {
                         let ret = self.send_full(buf, len);
                         /* free the written msgfds in any cases
@@ -148,11 +149,11 @@ impl SocketCharDev {
         }
     }
 
-    pub fn chr_read(&self, buf: &mut [u8], len: usize) -> isize {
+    pub fn chr_read(&mut self, buf: &mut [u8], len: usize) -> isize {
         //Grab all response bytes so none is left behind
-        let mut newbuf: &[u8] = &[0; TPM_TIS_BUFFER_MAX];
+        let mut newbuf: &mut [u8] = &mut [0; TPM_TIS_BUFFER_MAX];
         
-        if let Some(sock) = self.stream {
+        if let Some(ref mut sock) = self.stream {
             sock.read(&mut newbuf);
             byte_copy(&newbuf, buf);
             0
@@ -175,8 +176,8 @@ impl CharBackend {
         }
     }
 
-    pub fn chr_fe_init(&self) -> isize {
-        let sockdev = SocketCharDev::new();
+    pub fn chr_fe_init(&mut self) -> isize {
+        let mut sockdev = SocketCharDev::new();
 
         let res = sockdev.connect("/tmp/mytpm1/swtpm-sock");
         self.chr = Some(sockdev);
@@ -188,8 +189,8 @@ impl CharBackend {
         0
     }
 
-    pub fn chr_fe_set_msgfd(&self, fd: RawFd) -> isize {
-        if let Some(dev) = self.chr {
+    pub fn chr_fe_set_msgfd(&mut self, fd: RawFd) -> isize {
+        if let Some(ref mut dev) = self.chr {
             dev.set_msgfd(fd);
             0
         } else {
@@ -197,8 +198,8 @@ impl CharBackend {
         }
     }
 
-    pub fn chr_fe_set_dataioc(&self, fd: RawFd) -> isize {
-        if let Some(dev) = self.chr {
+    pub fn chr_fe_set_dataioc(&mut self, fd: RawFd) -> isize {
+        if let Some(ref mut dev) = self.chr {
             dev.set_dataioc(fd);
             0
         } else {
@@ -218,9 +219,9 @@ impl CharBackend {
      *
      * Returns: the number of bytes consumed (0 if no associated Chardev)
      */
-    pub fn chr_fe_write_all(&self, buf: &mut [u8], len: usize) -> isize {
-        if let Some(dev) = self.chr {
-            dev.chr_write(&mut buf, len)
+    pub fn chr_fe_write_all(&mut self, buf: &mut [u8], len: usize) -> isize {
+        if let Some(ref mut dev) = self.chr {
+            dev.chr_write(buf, len)
         } else {
             -1
         }
@@ -236,8 +237,8 @@ impl CharBackend {
      *
      * Returns: the number of bytes read (0 if no associated Chardev)
      */
-    pub fn chr_fe_read_all(&self, buf: &mut [u8], len: usize) -> isize {
-        if let Some(dev) = self.chr {
+    pub fn chr_fe_read_all(&mut self, mut buf: &mut [u8], len: usize) -> isize {
+        if let Some(ref mut dev) = self.chr {
             dev.chr_sync_read(&mut buf, len)
         } else {
             -1
