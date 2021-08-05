@@ -59,7 +59,7 @@ pub enum TPMVersion {
     TpmVersionTwo = 2,
 }
 
-enum TPMType {
+pub enum TPMType {
     TpmTypeEmulator,
     TpmTypePassthrough,
 }
@@ -70,7 +70,7 @@ pub struct TPMBackendCmd {
     pub input: Vec<u8>,
     pub input_len: u32,
     pub output: Vec<u8>,
-    pub output_len: u32,
+    pub output_len: isize,
     pub selftest_done: bool,
 }
 
@@ -80,18 +80,18 @@ impl TPMBackendCmd {
     }
 }
 
-pub trait TPMBackendObject {
-    fn had_startup_error(&self) -> bool;
-    fn get_version(&self) -> TPMVersion;
-    fn get_tpm_established_flag(&mut self) -> bool;
-    fn get_buffer_size(&mut self) -> usize;
-    fn cancel_cmd(&mut self);
-    fn reset_tpm_established_flag(&mut self) -> isize;
-    fn deliver_request(&mut self, cmd: TPMBackendCmd);
-    fn worker_thread(&mut self) -> isize;
-    fn handle_request(&mut self) -> isize;
-    fn set_locality(&mut self) -> isize;
-}
+// pub trait TPMBackendObject {
+//     fn had_startup_error(&self) -> bool;
+//     fn get_version(&self) -> TPMVersion;
+//     fn get_tpm_established_flag(&mut self) -> bool;
+//     fn get_buffer_size(&mut self) -> usize;
+//     fn cancel_cmd(&mut self);
+//     fn reset_tpm_established_flag(&mut self) -> isize;
+//     fn deliver_request(&mut self, cmd: TPMBackendCmd);
+//     fn worker_thread(&mut self) -> isize;
+//     fn handle_request(&mut self) -> isize;
+//     fn set_locality(&mut self) -> isize;
+// }
 
 pub struct TPMEmulator {
     had_startup_error: bool,
@@ -359,18 +359,18 @@ impl TPMEmulator {
         
         0
     }
-}
+// }
 
-impl TPMBackendObject for TPMEmulator {
-    fn had_startup_error(&self) -> bool {
+// impl TPMBackendObject for TPMEmulator {
+    pub fn had_startup_error(&self) -> bool {
         self.had_startup_error
     }
 
-    fn get_version(&self) -> TPMVersion {
+    pub fn get_version(&self) -> TPMVersion {
         self.version
     }
 
-    fn get_tpm_established_flag(&mut self) -> bool {
+    pub fn get_tpm_established_flag(&mut self) -> bool {
         let mut est: PtmEst = PtmEst::new();
 
         if self.established_flag_cached == 1 {
@@ -389,7 +389,7 @@ impl TPMBackendObject for TPMEmulator {
         self.established_flag == 1
     }
 
-    fn reset_tpm_established_flag(&mut self) -> isize {
+    pub fn reset_tpm_established_flag(&mut self) -> isize {
         let mut reset_est: PtmResetEst = PtmResetEst::new();
 
         /* only a TPM 2.0 will support this */
@@ -417,7 +417,7 @@ impl TPMBackendObject for TPMEmulator {
         0
     }
 
-    fn get_buffer_size(&mut self) -> usize {
+    pub fn get_buffer_size(&mut self) -> usize {
         let mut actual_size: usize = 0;
 
         if self.tpm_emulator_set_buffer_size(0, &mut actual_size) < 0 {
@@ -427,7 +427,7 @@ impl TPMBackendObject for TPMEmulator {
         actual_size
     }
 
-    fn cancel_cmd(&mut self) {
+    pub fn cancel_cmd(&mut self) {
         let mut res: PtmRes = 0;
 
         // If Emulator implements all caps
@@ -443,7 +443,7 @@ impl TPMBackendObject for TPMEmulator {
         }
     }
 
-    fn set_locality(&mut self) -> isize {
+    pub fn set_locality(&mut self) -> isize {
         let mut loc: PtmLoc = PtmLoc::new();
         let cmd = match self.cmd.clone() {
             None => return -1,
@@ -478,7 +478,7 @@ impl TPMBackendObject for TPMEmulator {
     }
 
 
-    fn handle_request(&mut self) -> isize {
+    pub fn handle_request(&mut self) -> isize {
         if let Some(ref mut cmd) = self.cmd {
             if self.set_locality() < 0 || self.unix_tx_bufs() < 0 {
                 return -1
@@ -489,7 +489,7 @@ impl TPMBackendObject for TPMEmulator {
         -1        
     }
 
-    fn worker_thread(&mut self) -> isize {
+    pub fn worker_thread(&mut self) -> isize {
         let err = self.handle_request();
         if err < 0 {
             // error_report_err(err);
@@ -498,7 +498,7 @@ impl TPMBackendObject for TPMEmulator {
         0
     }
 
-    fn deliver_request(&mut self, cmd: TPMBackendCmd) {
+    pub fn deliver_request(&mut self, cmd: TPMBackendCmd) {
         //tpm_backend_deliver_request
         if self.cmd.is_none() {
             self.cmd = Some(cmd);
@@ -510,15 +510,15 @@ impl TPMBackendObject for TPMEmulator {
 }
 
 pub struct TPMBackend {
-    backend_type: TPMType,
-    backend: Box<dyn TPMBackendObject>,
+    pub backend_type: TPMType,
+    pub backend: TPMEmulator,
 }
 
 impl TPMBackend {
     pub fn new() -> Self {
         Self {
             backend_type: TPMType::TpmTypeEmulator,
-            backend: Box::new(TPMEmulator::new()),
+            backend: TPMEmulator::new(),
         }
     }
 }
