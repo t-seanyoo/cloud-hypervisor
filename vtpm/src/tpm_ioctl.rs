@@ -1,6 +1,7 @@
 // Implementing struct in unions
 
 use byteorder::{BigEndian, ReadBytesExt}; // 1.2.7
+use std::convert::TryInto;
 
 pub struct TPMReqHdr {
     tag: u16,
@@ -8,7 +9,7 @@ pub struct TPMReqHdr {
     ordinal: u32,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Copy, Clone)]
 pub enum MemberType {
     Request,
     Response,
@@ -17,14 +18,13 @@ pub enum MemberType {
 }
 
 pub trait Ptm {
-    fn new(mem:MemberType) -> Self;
     /* Get which */
     fn get_mem(&self) -> MemberType;
     /* Convert to buffer with size of MAX(Req, Res) */
     fn convert_to_reqbytes(&self) -> Vec<u8>;
-    fn convert_to_ptm(&self, buf: &[u8]) -> isize;
-    fn set_mem(&self, mem: MemberType);
-    fn set_res(&self, res: u32);
+    fn convert_to_ptm(&mut self, buf: &[u8]) -> isize;
+    fn set_mem(&mut self, mem: MemberType);
+    fn set_res(&mut self, res: u32);
 }
 
 /*
@@ -33,9 +33,8 @@ pub trait Ptm {
  * ptm_res corresponds to the error code of a command executed by the TPM.
  */
 pub type PtmRes = u32;
-impl Ptm for PtmRes {
-    fn new(mem: MemberType) -> Self { 0 as u32 }
 
+impl Ptm for PtmRes {
     fn convert_to_reqbytes(&self) -> Vec<u8> {
         let buf: Vec<u8> = Vec::<u8>::new();
         buf
@@ -43,23 +42,23 @@ impl Ptm for PtmRes {
 
     fn get_mem(&self) -> MemberType { MemberType::Error }
 
-    fn convert_to_ptm(&self, buf: &[u8]) -> isize {
+    fn convert_to_ptm(&mut self, buf: &[u8]) -> isize {
         if buf.len() < 4 {
             return -1
         }
-        self = &buf.read_u32::<BigEndian>().unwrap();
+        let num_buf: &[u8; 4] = buf[0..4].try_into().expect("PtmRes convert to req");
+        let mut num: &mut u32 = &mut u32::from_be_bytes(*num_buf);
+        *self = *num;
         0
     }
 
-    fn set_mem(&self, mem:MemberType) {}
+    fn set_mem(&mut self, mem:MemberType) {}
 
-    fn set_res(&self, res: u32) {}
+    fn set_res(&mut self, res: u32) {}
 }
 
 pub type PtmCap = u64;
 impl Ptm for PtmCap {
-    fn new(mem: MemberType) -> Self { 0 as u64 }
-
     fn convert_to_reqbytes(&self) -> Vec<u8> {
         let buf: Vec<u8> = Vec::<u8>::new();
         buf
@@ -67,17 +66,17 @@ impl Ptm for PtmCap {
 
     fn get_mem(&self) -> MemberType { MemberType::Cap }
 
-    fn convert_to_ptm(&self, buf: &[u8]) -> isize {
+    fn convert_to_ptm(&mut self, mut buf: &[u8]) -> isize {
         if buf.len() < 8 {
             return -1
         }
-        self = &buf.read_u64::<BigEndian>().unwrap();
+        *self = buf.read_u64::<BigEndian>().unwrap();
         0
     }
 
-    fn set_mem(&self, mem:MemberType) {}
+    fn set_mem(&mut self, mem:MemberType) {}
 
-    fn set_res(&self, res: u32) {}
+    fn set_res(&mut self, res: u32) {}
 }
 
 /* PTM_GET_TPMESTABLISHED: get the establishment bit */
@@ -91,17 +90,19 @@ pub struct PtmEst {
     pub tpm_result: PtmRes,
 }
 
-impl Ptm for PtmEst {
-    fn new(mem: MemberType) -> Self {
+impl PtmEst {
+    pub fn new() -> Self {
         Self {
-            mem,
+            mem: MemberType::Request,
             tpm_result: 0,
             resp: PtmEstResp {
                 bit: 0,
             },
         }
     }
+}
 
+impl Ptm for PtmEst {
     fn convert_to_reqbytes(&self) -> Vec<u8> {
         let buf: Vec<u8> = Vec::<u8>::new();
         buf
@@ -109,21 +110,21 @@ impl Ptm for PtmEst {
 
     fn get_mem(&self) -> MemberType { self.mem }
 
-    fn convert_to_ptm(&self, buf: &[u8]) -> isize{
+    fn convert_to_ptm(&mut self, buf: &[u8]) -> isize{
         if buf.len() < 5 {
             return -1
         }
         self.set_mem(MemberType::Response);
-        let res = &buf[0..4];
+        let mut res = &buf[0..4];
         self.set_res(res.read_u32::<BigEndian>().unwrap());
         let bit = &buf[4];
         self.resp.bit = *bit;
         0
     }
 
-    fn set_mem(&self, mem:MemberType) { self.mem = mem }
+    fn set_mem(&mut self, mem:MemberType) { self.mem = mem }
 
-    fn set_res(&self, res: u32) { self.tpm_result = res }
+    fn set_res(&mut self, res: u32) { self.tpm_result = res }
 }
 
 /*
@@ -153,47 +154,49 @@ pub struct PtmSetBufferSize{
     pub tpm_result: PtmRes,
 }
 
-impl Ptm for PtmSetBufferSize {
-    fn new(mem: MemberType) -> Self {
+impl PtmSetBufferSize {
+    pub fn new() -> Self {
         Self {
-            mem,
+            mem: MemberType::Request,
             req: PtmSBSReq {buffersize:0},
             resp: PtmSBSResp {bufsize:0,minsize:0,maxsize:0},
             tpm_result: 0,
         }
     }
+}
 
+impl Ptm for PtmSetBufferSize {
     fn convert_to_reqbytes(&self) -> Vec<u8> {
-        let buf: Vec<u8> = Vec::<u8>::new();
+        let mut buf: Vec<u8> = Vec::<u8>::new();
         buf.extend_from_slice(&self.req.buffersize.to_be_bytes());
         buf
     }
 
     fn get_mem(&self) -> MemberType {self.mem}
 
-    fn convert_to_ptm(&self, buf: &[u8]) -> isize {
+    fn convert_to_ptm(&mut self, buf: &[u8]) -> isize {
         if buf.len() < 16 {
             return -1
         }
         self.set_mem(MemberType::Response);
-        let res = &buf[0..4];
+        let mut res = &buf[0..4];
         self.set_res(res.read_u32::<BigEndian>().unwrap());
         
-        let bufsize = &buf[4..7];
+        let mut bufsize = &buf[4..8];
         self.resp.bufsize = bufsize.read_u32::<BigEndian>().unwrap();
 
-        let minsize = &buf[7..11];
+        let mut minsize = &buf[8..12];
         self.resp.minsize = minsize.read_u32::<BigEndian>().unwrap();
 
-        let maxsize = &buf[11..15];
+        let mut maxsize = &buf[12..16];
         self.resp.maxsize = maxsize.read_u32::<BigEndian>().unwrap();
 
         0
     }
 
-    fn set_mem(&self, mem:MemberType) { self.mem = mem }
+    fn set_mem(&mut self, mem:MemberType) { self.mem = mem }
 
-    fn set_res(&self, res: u32) { self.tpm_result = res }
+    fn set_res(&mut self, res: u32) { self.tpm_result = res }
 }
 
 /* PTM_RESET_TPMESTABLISHED: reset establishment bit */
@@ -209,10 +212,10 @@ pub struct PtmResetEst {
     pub tpm_result: PtmRes,
 }
 
-impl Ptm for PtmResetEst {
-    fn new(mem: MemberType) -> Self {
+impl PtmResetEst {
+    pub fn new() -> Self {
         Self {
-            mem,
+            mem: MemberType::Request,
             req: PtmResEstReq {
                 loc: 0,
             },
@@ -220,28 +223,30 @@ impl Ptm for PtmResetEst {
             
         }
     }
+}
 
+impl Ptm for PtmResetEst {
     fn convert_to_reqbytes(&self) -> Vec<u8> {
-        let buf: Vec<u8> = Vec::<u8>::new();
+        let mut buf: Vec<u8> = Vec::<u8>::new();
         buf.extend_from_slice(&self.req.loc.to_be_bytes());
         buf
     }
 
     fn get_mem(&self) -> MemberType {self.mem}
 
-    fn convert_to_ptm(&self, buf: &[u8]) -> isize{
+    fn convert_to_ptm(&mut self, buf: &[u8]) -> isize{
         if buf.len() < 4 {
             return -1
         }
         self.set_mem(MemberType::Response);
-        let res = &buf[0..4];
+        let mut res = &buf[0..4];
         self.set_res(res.read_u32::<BigEndian>().unwrap());
         0
     }
 
-    fn set_mem(&self, mem:MemberType) { self.mem = mem }
+    fn set_mem(&mut self, mem:MemberType) { self.mem = mem }
 
-    fn set_res(&self, res: u32) { self.tpm_result = res }
+    fn set_res(&mut self, res: u32) { self.tpm_result = res }
 }
 
 /* PTM_SET_LOCALITY */
@@ -257,39 +262,41 @@ pub struct PtmLoc {
     pub tpm_result: PtmRes,
 }
 
-impl Ptm for PtmLoc {
-    fn new(mem: MemberType) -> Self {
+impl PtmLoc {
+    pub fn new() -> Self {
         Self {
-            mem,
+            mem: MemberType::Request,
             req: PtmLocReq {
                 loc: 0,
             },
             tpm_result: 0,
         }
     }
+}
 
+impl Ptm for PtmLoc {
     fn convert_to_reqbytes(&self) -> Vec<u8> {
-        let buf: Vec<u8> = Vec::<u8>::new();
+        let mut buf: Vec<u8> = Vec::<u8>::new();
         buf.extend_from_slice(&self.req.loc.to_be_bytes());
         buf
     }
 
     fn get_mem(&self) -> MemberType {self.mem}
 
-    fn convert_to_ptm(&self, buf: &[u8]) -> isize{
+    fn convert_to_ptm(&mut self, buf: &[u8]) -> isize{
         if buf.len() < 4 {
             return -1
         }
         self.set_mem(MemberType::Response);
-        let res = &buf[0..4];
+        let mut res = &buf[0..4];
         self.set_res(res.read_u32::<BigEndian>().unwrap());
         
         0
     }
 
-    fn set_mem(&self, mem:MemberType) { self.mem = mem }
+    fn set_mem(&mut self, mem:MemberType) { self.mem = mem }
 
-    fn set_res(&self, res: u32) { self.tpm_result = res }
+    fn set_res(&mut self, res: u32) { self.tpm_result = res }
 }
 
 /*
@@ -322,3 +329,108 @@ pub enum Commands {
     CmdSetBufferSize,
 }
 
+#[test]
+/** tpm_ioctl Testing */
+/* PtmRes */
+fn test_ptmres() {
+    println!("PtmRes Testing:");
+    let mut res: PtmRes = 144;
+    println!("PtmRes- original value: {}", res);
+    println!("PtmRes- convert_to_reqbytes: {:?}", res.convert_to_reqbytes());
+    assert_eq!(res.convert_to_reqbytes(), []);
+    println!("PtmRes- get_mem: {:?}", res.get_mem());
+    assert_eq!(res.get_mem(), MemberType::Error);
+    let buf: &[u8] = &[0,0,0,1,1,4];
+    res.convert_to_ptm(&buf);
+    println!("PtmRes- convert_to_ptm: {:?}", res);
+}
+
+/* PtmCap */
+fn test_ptmcap() {
+    println!("PtmCap Testing");
+    let mut cap: PtmCap = 300;
+    println!("PtmCap- original value: {}", cap);
+    println!("PtmCap- convert_to_reqbytes: {:?}", cap.convert_to_reqbytes());
+    assert_eq!(cap.convert_to_reqbytes(), []);
+    println!("PtmCes- get_mem: {:?}", cap.get_mem());
+    assert_eq!(cap.get_mem(), MemberType::Cap);
+    let buf: &[u8] = &[0,0,0,0,0,0,1,1,1,1];
+    cap.convert_to_ptm(&buf);
+    println!("PtmRes- convert_to_ptm: {:?}", cap);
+}
+
+/* PtmEst Testing */
+fn test_ptmest() {
+    println!("PtmEst Testing");
+    let mut est: PtmEst = PtmEst::new();
+    println!("PtmEst- original value: {:?}", est);
+    println!("PtmEst- convert_to_reqbytes: {:?}", est.convert_to_reqbytes());
+    assert_eq!(est.convert_to_reqbytes(), []);
+    println!("PtmEst- get_mem: {:?}", est.get_mem());
+    assert_eq!(est.get_mem(), MemberType::Request);
+    let buf: &[u8] = &[0,0,0,1,1,0,1,1,1,1];
+    est.convert_to_ptm(&buf);
+    println!("PtmEst- convert_to_ptm: {:?}", est);
+    est.set_mem(MemberType::Error);
+    println!("PtmEst- set_mem to Error: {:?}", est.get_mem());
+    assert_eq!(est.get_mem(), MemberType::Error);
+    est.set_res(13);
+    println!("PtmEst- set_res: {:?}", est);
+}
+
+/* PtmSetBufferSize Testing */
+fn test_ptmsetbuffersize() {
+    println!("PtmSetBufferSize Testing");
+    let mut psbs: PtmSetBufferSize = PtmSetBufferSize::new();
+    println!("PtmSetBufferSize- original value: {:?}", psbs);
+    psbs.req.buffersize = 266;
+    println!("PtmSetBufferSize- convert_to_reqbytes: {:?}", psbs.convert_to_reqbytes());
+    println!("PtmSetBufferSize- get_mem: {:?}", psbs.get_mem());
+    assert_eq!(psbs.get_mem(), MemberType::Request);
+    let buf: &[u8] = &[0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,1];
+    psbs.convert_to_ptm(&buf);
+    println!("PtmSetBufferSize- convert_to_ptm: {:?}", psbs);
+    psbs.set_mem(MemberType::Error);
+    println!("PtmSetBufferSize- set_mem to Error: {:?}", psbs.get_mem());
+    assert_eq!(psbs.get_mem(), MemberType::Error);
+    psbs.set_res(13);
+    println!("PtmSetBufferSize- set_res to 13: {:?}", psbs);
+}
+/* PtmResetEst */
+fn test_ptmresetest() {
+    println!("PtmResetEst Testing");
+    let mut pre: PtmResetEst = PtmResetEst::new();
+    println!("PtmResetEst- original value: {:?}", pre);
+    pre.req.loc = 17;
+    println!("PtmResetEst- convert_to_reqbytes: {:?}", pre.convert_to_reqbytes());
+    println!("PtmResetEst- get_mem: {:?}", pre.get_mem());
+    assert_eq!(pre.get_mem(), MemberType::Request);
+    let buf: &[u8] = &[0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,1];
+    pre.convert_to_ptm(&buf);
+    println!("PtmResetEst- convert_to_ptm: {:?}", pre);
+    pre.set_mem(MemberType::Error);
+    println!("PtmResetEst- set_mem to Error: {:?}", pre.get_mem());
+    assert_eq!(pre.get_mem(), MemberType::Error);
+    pre.set_res(13);
+    println!("PtmResetEst- set_res to 13: {:?}", pre);
+}
+
+/* PtmLoc Testing */
+fn test_ptmloc() {
+    println!("PtmLoc Testing");
+    let mut loc: PtmLoc = PtmLoc::new();
+    println!("PtmLoc- original value: {:?}", loc);
+    loc.req.loc = 17;
+    println!("Set loc to 17");
+    println!("PtmLoc- convert_to_reqbytes: {:?}", loc.convert_to_reqbytes());
+    println!("PtmLoc- get_mem: {:?}", loc.get_mem());
+    assert_eq!(loc.get_mem(), MemberType::Request);
+    let buf: &[u8] = &[0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,1];
+    loc.convert_to_ptm(&buf);
+    println!("PtmLoc- convert_to_ptm: {:?}", loc);
+    loc.set_mem(MemberType::Error);
+    println!("PtmLoc- set_mem to Error: {:?}", loc.get_mem());
+    assert_eq!(loc.get_mem(), MemberType::Error);
+    loc.set_res(13);
+    println!("PtmLoc- set_res to 13: {:?}", loc);
+}
