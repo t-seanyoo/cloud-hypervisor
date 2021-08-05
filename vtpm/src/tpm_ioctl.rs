@@ -3,13 +3,14 @@
 use byteorder::{BigEndian, ReadBytesExt}; // 1.2.7
 use std::convert::TryInto;
 
+#[derive(Debug)]
 pub struct TPMReqHdr {
     tag: u16,
     len: u32,
     ordinal: u32,
 }
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub enum MemberType {
     Request,
     Response,
@@ -80,10 +81,12 @@ impl Ptm for PtmCap {
 }
 
 /* PTM_GET_TPMESTABLISHED: get the establishment bit */
+#[derive(Debug)]
 pub struct PtmEstResp {
     pub bit: u8,
 }
 
+#[derive(Debug)]
 pub struct PtmEst {
     mem: MemberType,
     pub resp: PtmEstResp,
@@ -135,16 +138,19 @@ impl Ptm for PtmEst {
  * requested one, if it was below the minimum, or smaller than the
  * requested one, if it was above the maximum.
  */
+#[derive(Debug)]
 pub struct PtmSBSReq {
     pub buffersize: u32,
 }
 
+#[derive(Debug)]
 pub struct PtmSBSResp {
     pub bufsize: u32,
     minsize: u32,
     maxsize: u32,
 }
 
+#[derive(Debug)]
 pub struct PtmSetBufferSize{
     pub mem: MemberType,
     /* request */
@@ -200,10 +206,12 @@ impl Ptm for PtmSetBufferSize {
 }
 
 /* PTM_RESET_TPMESTABLISHED: reset establishment bit */
+#[derive(Debug)]
 pub struct PtmResEstReq {
     pub loc: u8, /* locality to use */
 }
 
+#[derive(Debug)]
 pub struct PtmResetEst {
     pub mem: MemberType,
     /* request */
@@ -250,10 +258,12 @@ impl Ptm for PtmResetEst {
 }
 
 /* PTM_SET_LOCALITY */
+#[derive(Debug)]
 pub struct PtmLocReq {
     pub loc: u8,
 }
 
+#[derive(Debug)]
 pub struct PtmLoc {
     pub mem: MemberType,
     /* request */
