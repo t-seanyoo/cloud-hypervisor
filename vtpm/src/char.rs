@@ -57,6 +57,17 @@ impl SocketCharDev {
         }
     }
 
+    pub fn debugmessage(&mut self) {
+        {
+            let mut buf = (44 as u32).to_be_bytes();
+            let iov = &[IoVec::from_slice(&buf)];
+            let res = sendmsg(self.ctrl_fd, iov, &[ControlMessage::ScmRights(&[])], MsgFlags::empty(), None).expect("Error sending");
+            let mut buf2: &mut [u8] = &mut [1 as u8; 4];
+            println!("before: {:?}", buf2);
+            let (n, s) = recvfrom(self.ctrl_fd, buf2).expect("Hello");
+        }
+    }
+
     pub fn connect(&mut self, socket_path: &str) -> isize {
         self.state = ChardevState::ChardevStateConnecting;
 
@@ -70,6 +81,7 @@ impl SocketCharDev {
                     self.ctrl_fd = fd;
                     self.stream = Some(s);
                     self.state = ChardevState::ChardevStateConnected;
+                    
                     return 0
                 }
                 Err(e) => e,
@@ -125,7 +137,7 @@ impl SocketCharDev {
                         let ret = self.send_full(buf, len);
                         /* free the written msgfds in any cases
                         * other than ret < 0 */
-                        if ret < 0 {
+                        if ret >= 0 {
                             self.write_msgfd = 0;
                         }
 
@@ -164,7 +176,7 @@ impl SocketCharDev {
 }
 
 pub struct CharBackend {
-    chr: Option<SocketCharDev>,
+    pub chr: Option<SocketCharDev>,
     fe_open: bool,
 }
 

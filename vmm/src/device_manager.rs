@@ -965,6 +965,7 @@ impl DeviceManager {
             .ok_or(DeviceManagerError::AllocateIoPort)?;
         let device_manager = DeviceManager {
             address_manager: Arc::clone(&address_manager),
+            // vtpm: None,
             console: Arc::new(Console::default()),
             interrupt_controller: None,
             cmdline_additions: Vec::new(),
@@ -1063,6 +1064,8 @@ impl DeviceManager {
                 .map_err(DeviceManagerError::BusError)?;
         }
 
+        
+
         #[cfg(target_arch = "x86_64")]
         self.add_legacy_devices(
             self.reset_evt
@@ -1092,6 +1095,14 @@ impl DeviceManager {
             serial_pty,
             console_pty,
         )?;
+
+        //Add VTPM
+        println!("REACHED THIS POINT");
+        let vtpm = self.add_vtpm_device(
+            &legacy_interrupt_manager
+        )?;
+        self.bus_devices.push(Arc::clone(&vtpm) as Arc<Mutex<dyn BusDevice>>);
+        println!("REACHED THIS POINT 2");
 
         // Reserve some IRQs for PCI devices in case they need to support INTx.
         self.reserve_legacy_interrupts_for_pci_devices()?;
@@ -1577,10 +1588,11 @@ impl DeviceManager {
 
     fn add_vtpm_device(
         &mut self,
-    ) -> DeviceManagerResult<()> {
+        // serial_writer: Option<Box<dyn io::Write + Send>>,
+        interrupt_manager: &Arc<dyn InterruptManager<GroupConfig = LegacyIrqGroupConfig>>,
+    ) -> DeviceManagerResult<Arc<Mutex<devices::tpm_tis::TPMIsa>>> {
 
-        // Memory Mapped IO + Handlers
-        let serial_irq = self
+        let irq_num = self
             .address_manager
             .allocator
             .lock()
@@ -1588,10 +1600,16 @@ impl DeviceManager {
             .allocate_irq()
             .unwrap();
 
+        let interrupt_group = interrupt_manager
+            .create_group(LegacyIrqGroupConfig {
+                irq: irq_num as InterruptIndex,
+            })
+            .map_err(DeviceManagerError::CreateInterruptGroup)?;
+
         // Must Create VTPM Device...
-        let vtpm = Arc::new(Mutex::new(devices::legacy::TpmIsa::new(
+        let vtpm = Arc::new(Mutex::new(devices::tpm_tis::TPMIsa::new(
             interrupt_group,
-            serial_writer,
+            irq_num,
         )));
 
         // Add VTPM Device to mmio
@@ -1600,7 +1618,7 @@ impl DeviceManager {
             .insert(vtpm.clone(), arch::layout::VTPM_START.0, arch::layout::VTPM_SIZE)
             .map_err(DeviceManagerError::BusError)?;
 
-        Ok(())
+        Ok(vtpm)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -3733,7 +3751,7 @@ impl Aml for VTPMDevice {
     fn to_aml_bytes(&self) -> Vec<u8> {
         let uuid = Uuid::parse_str("3DDDFAA6-361B-4EB4-A424-8D10089D1653").unwrap();
         let (uuid_d1, uuid_d2, uuid_d3, uuid_d4) = uuid.as_fields();
-        let mut uuid_buf = vec![];
+        let mut uuid_buf: Vec<u8> = vec![];
         uuid_buf.extend(&uuid_d1.to_le_bytes());
         uuid_buf.extend(&uuid_d2.to_le_bytes());
         uuid_buf.extend(&uuid_d3.to_le_bytes());
@@ -3741,7 +3759,7 @@ impl Aml for VTPMDevice {
 
         let uuid_unknown = Uuid::parse_str("376054ed-cc13-4675-901c-4756d7f2d45d").unwrap();
         let (uuidu_d1, uuidu_d2, uuidu_d3, uuidu_d4) = uuid_unknown.as_fields();
-        let mut uuidu_buf = vec![];
+        let mut uuidu_buf: Vec<u8> = vec![];
         uuidu_buf.extend(&uuidu_d1.to_le_bytes());
         uuidu_buf.extend(&uuidu_d2.to_le_bytes());
         uuidu_buf.extend(&uuidu_d3.to_le_bytes());
@@ -4120,10 +4138,6 @@ impl Aml for DeviceManager {
             pci_dsdt_inner_data.push(pci_device);
         }
 
-        // Add vtpm device onto PCI stack:
-        let vtpm_device = VTPMDevice { tpm_ppi_addr_base: (0xFED45000 as usize), };
-        pci_dsdt_inner_data.push(&vtpm_device);
-
         let pci_device_methods = PciDevSlotMethods {};
         pci_dsdt_inner_data.push(&pci_device_methods);
 
@@ -4220,6 +4234,13 @@ impl Aml for DeviceManager {
             ],
         )
         .to_aml_bytes();
+
+        // Add vtpm device:
+        let vtpm_acpi = VTPMDevice { tpm_ppi_addr_base: (0xFED45000 as usize), };
+        let vtpm_dsdt_data = vtpm_acpi.to_aml_bytes();
+        bytes.extend_from_slice(vtpm_dsdt_data.as_slice());
+
+        
 
         let ged_data = self
             .ged_notification_device

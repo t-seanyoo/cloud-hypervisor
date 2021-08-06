@@ -144,6 +144,8 @@ impl TPMEmulator {
             // ERROR: tpm-emulator: Could not get the TPM established flag:
         }
 
+        // res.debugsend();
+
         res
     }
 
@@ -246,15 +248,17 @@ impl TPMEmulator {
             // };
 
             let mut buf = Vec::<u8>::with_capacity(n as usize);
+            buf.extend(cmd_no);
+            buf.extend(converted_req);
             
-            let mut dst_ptr = buf.as_mut_ptr();
-            let cmdno_ptr = cmd_no.as_ptr();
+            // let mut dst_ptr = buf.as_mut_ptr();
+            // let cmdno_ptr = cmd_no.as_ptr();
             //COnfirm if buffer is less than size
-            unsafe { ptr::copy_nonoverlapping(cmdno_ptr, dst_ptr, size_of_cmd_no)};
+            // unsafe { ptr::copy_nonoverlapping(cmdno_ptr, dst_ptr, size_of_cmd_no)};
 
-            let msg_ptr = converted_req.as_ptr();
-            dst_ptr = unsafe {dst_ptr.offset(size_of_cmd_no as isize)};
-            unsafe { ptr::copy_nonoverlapping(msg_ptr, dst_ptr, msg_len_in) };
+            // let msg_ptr = converted_req.as_ptr();
+            // dst_ptr = unsafe {dst_ptr.offset(size_of_cmd_no as isize)};
+            // unsafe { ptr::copy_nonoverlapping(msg_ptr, dst_ptr, msg_len_in) };
             // memcpy(buf, &cmd_no, sizeof(cmd_no));
             // memcpy(buf + sizeof(cmd_no), msg, msg_len_in);
 
@@ -263,6 +267,10 @@ impl TPMEmulator {
                 std::mem::drop(guard);
                 return -1;
             }
+
+            // if let Some(ref mut chardev) = self.ctrl_chr.chr {
+            //     chardev.debugmessage();
+            // }
 
             let mut output = [0 as u8; TPM_TIS_BUFFER_MAX];
 
@@ -297,6 +305,23 @@ impl TPMEmulator {
         }
 
         0
+    }
+
+    fn debugsend(&mut self) {
+        let mut startup_command = &[
+            0x80, 0x01, // TPM_ST_NO_SESSIONS
+            0x00, 0x00, 0x00, 0x0c, // commandSize = 12
+            0x00, 0x00, 0x01, 0x44, // TPM_CC_Startup
+            0x00, 0x00, // TPM_SU_CLEAR
+        ];
+
+        //qio_channel_write_all
+        let iov = &[IoVec::from_slice(startup_command)];
+        let ret = sendmsg(self.data_ioc, iov, &[], MsgFlags::empty(), None).expect("char.rs: ERROR ON send_full sendmsg") as isize;
+
+        let mut out: Vec<u8> = vec![0; 10];
+        //qio_channel_read_all
+        let (size, sock) = recvfrom(self.data_ioc, &mut out).expect("unix_tx_bufs: sync_read recvmsg error");
     }
 
     fn unix_tx_bufs(&mut self) -> isize {

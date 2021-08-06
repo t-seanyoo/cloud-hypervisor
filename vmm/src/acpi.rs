@@ -156,6 +156,7 @@ struct ViotPciRangeNode {
     _reserved2: [u8; 6],
 }
 
+
 pub fn create_dsdt_table(
     device_manager: &Arc<Mutex<DeviceManager>>,
     cpu_manager: &Arc<Mutex<CpuManager>>,
@@ -470,7 +471,7 @@ pub fn create_acpi_tables(
 
     // TEST OUTPUT ACPI TABLE
     let dsdt_data = dsdt.as_slice();
-    let mut f = File::create("/home/test/fileshare/fileshare/output").expect("Unable to create file");
+    let mut f = File::create("/home/test/fileshare/fileshare/output2").expect("Unable to create file");
     f.write_all(dsdt_data).expect("Unable to write data");
 
     let dsdt_offset = rsdp_offset.checked_add(Rsdp::len() as u64).unwrap();

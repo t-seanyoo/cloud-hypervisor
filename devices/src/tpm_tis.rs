@@ -1,3 +1,4 @@
+use byteorder::{ByteOrder, LittleEndian};
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::{Arc, Barrier};
@@ -16,7 +17,7 @@ use vtpm::tpm_backend::{TPMVersion, TPMType, TPMBackendCmd, TPMEmulator, TPMBack
 /* Costants */
 const TPM_TIS_NUM_LOCALITIES: i8 = 5;
 const TPM_TIS_BUFFER_MAX: u32 = 4096;
-const TPM_TIS_NO_LOCALITY: i8 = 0xff;
+const TPM_TIS_NO_LOCALITY: i8 = -1;
 const TPM_TIS_ACCESS_TPM_REG_VALID_STS: u32 = 1 << 7;
 const TPM_TIS_STS_TPM_FAMILY2_0: u32 = 1 << 26;
 const TPM_TIS_IFACE_ID_SUPPORTED_FLAGS2_0: u32 = (0x0) | (0 << 4) | (1 << 8) | (1 << 13);
@@ -159,14 +160,13 @@ pub struct TPMIsa {
     next_locty: i8,
     locs: Vec<TPMLocality>,
     be_buffer_size: isize,
-    cmd: Option<TPMBackendCmd>, //IMPLEMENT in new
     be_driver: TPMBackend, //IMPLEMENT in new
     be_tpm_version: TPMVersion, //IMPLEMENT in new
     // TPM PPI Object
     // PPI Enabled Bool
     irq_num: u32,
     irq: Arc<Box<dyn InterruptSourceGroup>>,
-    out: Option<Box<dyn io::Write + Send>>,
+    // out: Option<Box<dyn io::Write + Send>>,
 }
 
 impl VersionMapped for TPMState {}
@@ -175,7 +175,7 @@ impl TPMIsa {
     pub fn new(
         irq: Arc<Box<dyn InterruptSourceGroup>>,
         irq_num: u32,
-        out: Option<Box<dyn io::Write + Send>>,
+        // out: Option<Box<dyn io::Write + Send>>,
     ) -> Self {
         let mut locs = Vec::with_capacity(TPM_TIS_NUM_LOCALITIES as usize);
         const buffersize: usize = TPM_TIS_BUFFER_MAX as usize;
@@ -197,14 +197,12 @@ impl TPMIsa {
             aborting_locty: TPM_TIS_NO_LOCALITY,
             next_locty: TPM_TIS_NO_LOCALITY,
             be_buffer_size: -1,
-            cmd: None,
             be_driver: TPMBackend::new(), //IMPLEMENT in new
             /* TPM 2 only supported for now. This value should be modified for other versions of TPM */
             be_tpm_version: TPMVersion::TpmVersionTwo,  
             locs,
             irq_num,
             irq,
-            out,
         }
     }
 
@@ -233,9 +231,9 @@ impl TPMIsa {
     }
 
     /* TpmIsa helper functions */
-    fn tpm_cmd_get_size(&self, buffer: Vec<u8>) -> u32 {
+    fn tpm_cmd_get_size(&mut self) -> u32 {
         //IMPLEMENT
-        let size: &[u8; 4] = buffer[2..2+4].try_into().expect("tpm_util_is_selftest: slice with incorrect length");
+        let size: &[u8; 4] = self.buffer[2..2+4].try_into().expect("tpm_util_is_selftest: slice with incorrect length");
         u32::from_ne_bytes(*size).to_be()
     }
 
@@ -268,11 +266,11 @@ impl TPMIsa {
     * Read a byte of response data
     */
     fn tpm_tis_data_read(&mut self, locty: i8) -> u8 {
-        let ret = TPM_TIS_NO_DATA_BYTE as u8;
+        let mut ret = TPM_TIS_NO_DATA_BYTE as u8;
         let len: u16;
 
         if (self.locs[locty as usize].sts & TPM_TIS_STS_DATA_AVAILABLE) != 0 {
-            len = cmp::min(self.tpm_cmd_get_size(self.buffer) as u16, self.be_buffer_size as u16); //IMPLEMENT
+            len = cmp::min(self.tpm_cmd_get_size() as u16, self.be_buffer_size as u16); //IMPLEMENT
             ret = self.buffer[self.rw_offset as usize];
             self.rw_offset +=1;
             if self.rw_offset >= len {
@@ -337,12 +335,12 @@ impl TPMIsa {
         self.locs[locality as usize].sts |= flags;
     }
 
-    fn tpm_backend_get_tpm_established_flag(&self) -> bool {
+    fn tpm_backend_get_tpm_established_flag(&mut self) -> bool {
         // k->get_tpm_established_flag ? k->get_tpm_established_flag(s) : false;
         self.be_driver.backend.get_tpm_established_flag()
     }
 
-    fn tpm_backend_reset_tpm_established_flag(&self, locty: i8) -> isize {
+    fn tpm_backend_reset_tpm_established_flag(&mut self, locty: i8) -> isize {
         // k->reset_tpm_established_flag ? k->reset_tpm_established_flag(s, locty) : 0;
         self.be_driver.backend.reset_tpm_established_flag()
     }
@@ -355,19 +353,19 @@ impl TPMIsa {
      * Send a request to the backend. The backend will then send the request
      * to the TPM implementation.
      */
-    fn tpm_backend_deliver_request(&self, cmd: TPMBackendCmd) {
+    fn tpm_backend_deliver_request(&mut self, cmd: TPMBackendCmd) {
         self.be_driver.backend.deliver_request(cmd);
     }
 
-    fn tpm_backend_had_startup_error(&self) -> bool {
+    fn tpm_backend_had_startup_error(&mut self) -> bool {
         self.be_driver.backend.had_startup_error()
     }
 
-    fn tpm_backend_cancel_cmd(&self) {
+    fn tpm_backend_cancel_cmd(&mut self) {
         self.be_driver.backend.cancel_cmd();
     }
 
-    fn tpm_tis_abort(&self) {
+    fn tpm_tis_abort(&mut self) {
         self.rw_offset = 0;
 
         /*
@@ -389,7 +387,7 @@ impl TPMIsa {
     }
 
     /* prepare aborting current command */
-    fn tpm_tis_prep_abort(&self, locty: i8, newlocty: i8) {
+    fn tpm_tis_prep_abort(&mut self, locty: i8, newlocty: i8) {
         let busy_locty: u8;
         assert!(newlocty < 5);
 
@@ -414,7 +412,7 @@ impl TPMIsa {
         self.tpm_tis_abort();
     }
 
-    fn tpm_tis_tpm_send(&self, locty: i8) {
+    fn tpm_tis_tpm_send(&mut self, locty: i8) {
         /*
         * rw_offset serves as length indicator for length of data;
         * it's reset when the response comes back
@@ -422,23 +420,22 @@ impl TPMIsa {
         self.locs[locty as usize].state = TPMTISState::TpmTisStateExecution;
         let cmd = TPMBackendCmd { // UPDATE AND VERIFY IMPLEMENT
             locty: locty,
-            input: self.buffer,
+            input: self.buffer.clone(),
             input_len: self.rw_offset as u32,
-            output: self.buffer,
+            output: self.buffer.clone(),
             output_len: self.be_buffer_size,
             selftest_done: false,
         };
-        self.cmd = Some(cmd);
 
         self.tpm_backend_deliver_request(cmd);
     }
 
-    fn handle_write(&mut self, _base: u64, offset: u64, val: u32, mask: u32, data: &[u8]) -> Result<()> {
+    fn handle_write(&mut self, _base: u64, offset: u64, mut val: u32, mut mask: u32, data: &[u8]) -> Result<()> {
         let locty = tpm_tis_locality_from_addr(_base + offset);
         let shift: u8 = (((_base + offset) & 0x3) * 8) as u8;
         let mut size = data.len();
         let addr = _base + offset;
-        let set_new_locty = -1;
+        let mut set_new_locty = -1;
 
         if self.tpm_backend_had_startup_error() {
             return Err(Error::TPMBackendFailure);
@@ -460,12 +457,12 @@ impl TPMIsa {
                     val &= !(TPM_TIS_ACCESS_REQUEST_USE | TPM_TIS_ACCESS_ACTIVE_LOCALITY) as u32;
                 }
 
-                let active_locty = self.active_locty;
+                let mut active_locty = self.active_locty;
 
                 if val & TPM_TIS_ACCESS_ACTIVE_LOCALITY as u32 != 0 {
                     /* give up locality if currently owned */
                     if self.active_locty == locty {
-                        let newlocty: i8 = TPM_TIS_NO_LOCALITY;
+                        let mut newlocty: i8 = TPM_TIS_NO_LOCALITY;
                         /* anybody wants the locality ? */
                         for c in (0..TPM_TIS_NUM_LOCALITIES-1).rev() {
                             if self.locs[c as usize].access & TPM_TIS_ACCESS_REQUEST_USE != 0 {
@@ -499,7 +496,7 @@ impl TPMIsa {
                     * active
                     */
                     while ((self.active_locty < 5) && locty > self.active_locty) || !(self.active_locty < 5) {
-                        let higher_seize = false;
+                        let mut higher_seize = false;
 
                         /* already a pending SEIZE ? */
                         if self.locs[locty as usize].access & TPM_TIS_ACCESS_SEIZE as u8 != 0 {
@@ -577,7 +574,7 @@ impl TPMIsa {
                     val &= TPM_TIS_STS_COMMAND_READY | TPM_TIS_STS_TPM_GO | TPM_TIS_STS_RESPONSE_RETRY;
 
                     if val == TPM_TIS_STS_COMMAND_READY {
-                        match self.locs[locty as usize].state {
+                        match &self.locs[locty as usize].state {
                             TPM_TIS_STATE_READY => self.rw_offset = 0,
                             TPM_TIS_STATE_IDLE => {
                                 self.tpm_tis_sts_set(locty, TPM_TIS_STS_COMMAND_READY);
@@ -598,7 +595,7 @@ impl TPMIsa {
                             }
                         }
                     } else if val == TPM_TIS_STS_TPM_GO {
-                        match self.locs[locty as usize].state {
+                        match &self.locs[locty as usize].state {
                             TPM_TIS_STATE_RECEPTION => {
                                 if (self.locs[locty as usize].sts & TPM_TIS_STS_EXPECT) == 0 {
                                     self.tpm_tis_tpm_send(locty);
@@ -607,7 +604,7 @@ impl TPMIsa {
                             _ => {},
                         }
                     } else if val == TPM_TIS_STS_RESPONSE_RETRY {
-                        match self.locs[locty as usize].state {
+                        match &self.locs[locty as usize].state {
                             TPM_TIS_STATE_COMPLETION => {
                                 self.rw_offset = 0;
                                 self.tpm_tis_sts_set(locty, TPM_TIS_STS_VALID|TPM_TIS_STS_DATA_AVAILABLE);
@@ -649,7 +646,7 @@ impl TPMIsa {
                             /* we have a packet length - see if we have all of it */
                             let need_irq: bool = !(self.locs[locty as usize].sts & TPM_TIS_STS_VALID) != 0;
     
-                            let len = self.tpm_cmd_get_size(self.buffer); //IMPLEMENT
+                            let len = self.tpm_cmd_get_size(); //IMPLEMENT
                             if len > self.rw_offset as u32 {
                                 self.tpm_tis_sts_set(locty, TPM_TIS_STS_EXPECT | TPM_TIS_STS_VALID);
                             } else {
@@ -679,14 +676,14 @@ impl TPMIsa {
 }
 
 impl BusDevice for TPMIsa {
-    fn read(&mut self, _base: u64, offset: u64, data: &mut [u8]) {
-        let locty: i8 = tpm_tis_locality_from_addr(_base + offset);
-        let avail: u32;
+    fn read(&mut self, base: u64, offset: u64, data: &mut [u8]) {
+        let locty: i8 = tpm_tis_locality_from_addr(base + offset);
+        let mut avail: u32;
         let mut size = data.len();
-        let v: u8;
-        let shift: u8 = (((_base + offset) & 0x3) * 8) as u8;
+        let mut v: u8;
+        let mut shift: u8 = (((base + offset) & 0x3) * 8) as u8;
         let mut read_ok = true;
-        let val: u32 = 0xffffffff;
+        let mut val: u32 = 0xffffffff;
 
         //Check tpm_backend_active:
         // if (tpm_backend_had_startup_error(s->be_driver)) {
@@ -709,7 +706,7 @@ impl BusDevice for TPMIsa {
             TPM_TIS_REG_STS => {
                 if self.active_locty == locty {
                     if self.locs[locty as usize].sts & TPM_TIS_STS_DATA_AVAILABLE != 0 {
-                        val = (((cmp::min(self.tpm_cmd_get_size(self.buffer) as u16,self.be_buffer_size as u16)) << 8) | self.locs[locty as usize].sts as u16) as u32; //IMPLEMENT tpm_cmd_get_size
+                        val = (((cmp::min(self.tpm_cmd_get_size() as u16,self.be_buffer_size as u16)) << 8) | self.locs[locty as usize].sts as u16) as u32; //IMPLEMENT tpm_cmd_get_size
                     } else {
                         avail = self.be_buffer_size as u32 - self.rw_offset as u32; // IMPLEMENT be_buffer_size
                         /*
@@ -726,14 +723,14 @@ impl BusDevice for TPMIsa {
             TPM_TIS_REG_DATA_FIFO => {},
             TPM_TIS_REG_DATA_XFIFO ..= TPM_TIS_REG_DATA_XFIFO_END => {
                 if self.active_locty == locty {
-                    if size > (4 - (_base & 0x3)) as usize {
+                    if size > (4 - (base & 0x3)) as usize {
                         /* prevent access beyond FIFO */
-                        size = (4 - (_base & 0x3)) as usize;
+                        size = (4 - (base & 0x3)) as usize;
                     }
                     val = 0;
                     shift = 0;
                     while size > 0 {
-                        match self.locs[locty as usize].state {
+                        match &self.locs[locty as usize].state {
                             TPM_TIS_STATE_COMPLETION => v = self.tpm_tis_data_read(locty),
                             _ => {
                                 v = TPM_TIS_NO_DATA_BYTE as u8;
@@ -759,22 +756,24 @@ impl BusDevice for TPMIsa {
             val >>= shift;
         }
     
+
+        LittleEndian::write_u32(data, val);
         // trace_tpm_tis_mmio_read(size, addr, val);
-        if read_ok && data.len() <= 4 {
-            write_le_u32(data, val);
-        } else {
-            warn!(
-                "Invalid TPM read: offset {}, data length {}",
-                offset,
-                data.len()
-            );
-        }
+        // if read_ok && data.len() <= 4 {
+        //     write_le_u32(data, val);
+        // } else {
+        //     warn!(
+        //         "Invalid TPM read: offset {}, data length {}",
+        //         offset,
+        //         data.len()
+        //     );
+        // }
     }
 
     fn write(&mut self, _base: u64, offset: u64, data: &[u8]) -> Option<Arc<Barrier>> {
         let size = data.len();
         if size <= 4 {
-            let v = read_le_u32(data);
+            let v = LittleEndian::read_u32(data);
             let mask: u32 = if size == 1 { 0xff } else { if size == 2 { 0xffff } else { !0 } };
             if let Err(e) = self.handle_write(_base, offset, v, mask, data) {
                 warn!("Failed to write to TPM device: {}", e);
