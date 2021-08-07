@@ -149,6 +149,12 @@ impl TPMEmulator {
         res
     }
 
+    fn tpm_startup_tpm(&mut self) -> isize {
+        
+        
+        0
+    }
+
     fn tpm_emulator_prepare_data_fd(&mut self) -> isize {
         let mut res: PtmRes = 0;
 
@@ -218,6 +224,8 @@ impl TPMEmulator {
     }
 
     fn tpm_emulator_ctrlcmd<'a>(&mut self, cmd: Commands, msg: &'a mut dyn Ptm, msg_len_in: usize, msg_len_out: usize) -> isize {
+        println!("tpm_emulator_ctrlcmd(cmd?, msg?, msg_len_in: {}, msg_len_out: {})",  msg_len_in, msg_len_out);
+
         // let dev: TPMDevice = self.tpm;
         let cmd_no = (cmd as u32).to_be_bytes();
         let n: isize = (mem::size_of::<u32>() + msg_len_in) as isize;
@@ -396,15 +404,19 @@ impl TPMEmulator {
     }
 
     pub fn get_tpm_established_flag(&mut self) -> bool {
+        println!("get_tpm_established_flag function called");
         let mut est: PtmEst = PtmEst::new();
 
         if self.established_flag_cached == 1 {
+            println!("established_flag already cachedd");
             return self.established_flag == 1
         }
 
+        println!("call tpm_emulator_ctrlcmd: CmdGetTpmEstablished");
         if self.tpm_emulator_ctrlcmd(Commands::CmdGetTpmEstablished, &mut est, 0, 2*mem::size_of::<u32>()) < 0 {
             // error_report("tpm-emulator: Could not get the TPM established flag: %s",
             //         strerror(errno));
+            println!("Unsuccessful ctrlcmd: CmdGetTpmEstablished");
             return false;
         }
 
