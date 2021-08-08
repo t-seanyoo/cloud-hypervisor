@@ -1,6 +1,6 @@
 extern crate nix;
 
-use crate::tpm_ioctl::{TPMReqHdr, MemberType, Ptm, PtmRes, PtmCap, PtmEst, PtmSetBufferSize, PtmResetEst, PtmLoc, Commands};
+use crate::tpm_ioctl::{TPMReqHdr, MemberType, Ptm, PtmRes, PtmInit, PtmCap, PtmEst, PtmSetBufferSize, PtmResetEst, PtmLoc, Commands};
 use std::env;
 use std::fmt::{self, Display};
 use std::fs;
@@ -24,6 +24,7 @@ use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag, sendmsg, r
 const TPM_TIS_BUFFER_MAX: usize = 4096;
 const TPM_REQ_HDR_SIZE: u32 = 10;
 const TPM_RESP_HDR_SIZE: usize = 10;
+const PTM_INIT_FLAG_DELETE_VOLATILE: u32 = 1 << 0;
 
 /* capability flags returned by PTM_GET_CAPABILITY */
 const PTM_CAP_INIT: u64 = 1;
@@ -66,7 +67,7 @@ pub enum TPMType {
 
 #[derive(Clone)]
 pub struct TPMBackendCmd {
-    pub locty: i8,
+    pub locty: u8,
     pub input: Vec<u8>,
     pub input_len: u32,
     pub output: Vec<u8>,
@@ -101,7 +102,7 @@ pub struct TPMEmulator {
     ctrl_chr: CharBackend,
     data_ioc: RawFd,
     // tpm: TPMDevice,
-    cur_locty_number: i8, /* last set locality */
+    cur_locty_number: u8, /* last set locality */
     mutex: Arc<Mutex<usize>>,
     established_flag_cached: u8,
     established_flag: u8,
@@ -123,7 +124,7 @@ impl TPMEmulator {
             ctrl_chr: chardev,
             data_ioc: -1,
             // tpm: TPMDevice::init_simulator(),
-            cur_locty_number: -1,
+            cur_locty_number: 255,
             mutex: Arc::new(Mutex::new(0)),
             established_flag_cached: 0,
             established_flag: 0,
@@ -149,10 +150,36 @@ impl TPMEmulator {
         res
     }
 
-    fn tpm_startup_tpm(&mut self) -> isize {
+    fn tpm_emulator_startup_tpm_resume(&mut self, buffersize: usize, is_resume: bool) -> isize {
+        let mut init: PtmInit = PtmInit::new();
+
+        let mut actual_size: usize = 0;
+
+        if buffersize != 0 && self.tpm_emulator_set_buffer_size(buffersize, &mut actual_size) < 0 {
+            return -1
+        }
         
-        
+        if is_resume {
+            init.init_flags |= PTM_INIT_FLAG_DELETE_VOLATILE.to_be();
+        }
+
+        if self.tpm_emulator_ctrlcmd(Commands::CmdInit, &mut init, mem::size_of::<u32>(), mem::size_of::<u32>()) < 0 {
+            // error_report("tpm-emulator: could not send INIT: %s",
+            //          strerror(errno));
+            return -1
+        }
+
+        if init.tpm_result != 0 {
+            // error_report("tpm-emulator: TPM result for CMD_INIT: 0x%x %s", res,
+            //          tpm_emulator_strerror(res));
+            return -1
+        }
+
         0
+    }
+
+    pub fn tpm_emulator_startup_tpm(&mut self, buffersize: usize) -> isize {
+        self.tpm_emulator_startup_tpm_resume(buffersize, false)
     }
 
     fn tpm_emulator_prepare_data_fd(&mut self) -> isize {
@@ -514,13 +541,16 @@ impl TPMEmulator {
 
     }
 
+    pub fn tpm_backend_request_completed(&mut self) {
+
+    }
+
 
     pub fn handle_request(&mut self) -> isize {
-        if let Some(ref mut cmd) = self.cmd {
+        if self.cmd.is_some() {
             if self.set_locality() < 0 || self.unix_tx_bufs() < 0 {
                 return -1
             }
-    
             return 0
         }
         -1        
@@ -532,17 +562,18 @@ impl TPMEmulator {
             // error_report_err(err);
             return -1
         }
+        self.tpm_backend_request_completed();
         0
     }
 
-    pub fn deliver_request(&mut self, cmd: TPMBackendCmd) {
+    pub fn deliver_request(&mut self, cmd: &mut TPMBackendCmd) -> isize {
         //tpm_backend_deliver_request
         if self.cmd.is_none() {
-            self.cmd = Some(cmd);
+            self.cmd = Some(cmd.clone());
 
-            //Start Worker Thread //IMPLEMENT
+            return self.worker_thread()
         }
-        //ERROR Command already present
+        -1
     }
 }
 
@@ -557,5 +588,13 @@ impl TPMBackend {
             backend_type: TPMType::TpmTypeEmulator,
             backend: TPMEmulator::new(),
         }
+    }
+
+    pub fn deliver_request(&mut self, mut cmd: &mut TPMBackendCmd) -> isize{
+        self.backend.deliver_request(&mut cmd)
+    }
+
+    pub fn startup_tpm(&mut self, buffersize: usize) -> isize {
+        self.backend.tpm_emulator_startup_tpm(buffersize)
     }
 }

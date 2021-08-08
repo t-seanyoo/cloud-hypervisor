@@ -208,7 +208,7 @@ impl Ptm for PtmSetBufferSize {
 /* PTM_RESET_TPMESTABLISHED: reset establishment bit */
 #[derive(Debug)]
 pub struct PtmResEstReq {
-    pub loc: i8, /* locality to use */
+    pub loc: u8, /* locality to use */
 }
 
 #[derive(Debug)]
@@ -260,7 +260,7 @@ impl Ptm for PtmResetEst {
 /* PTM_SET_LOCALITY */
 #[derive(Debug)]
 pub struct PtmLocReq {
-    pub loc: i8,
+    pub loc: u8,
 }
 
 #[derive(Debug)]
@@ -288,6 +288,52 @@ impl Ptm for PtmLoc {
     fn convert_to_reqbytes(&self) -> Vec<u8> {
         let mut buf: Vec<u8> = Vec::<u8>::new();
         buf.extend_from_slice(&self.req.loc.to_be_bytes());
+        buf
+    }
+
+    fn get_mem(&self) -> MemberType {self.mem}
+
+    fn convert_to_ptm(&mut self, buf: &[u8]) -> isize{
+        if buf.len() < 4 {
+            return -1
+        }
+        self.set_mem(MemberType::Response);
+        let mut res = &buf[0..4];
+        self.set_res(res.read_u32::<BigEndian>().unwrap());
+        
+        0
+    }
+
+    fn set_mem(&mut self, mem:MemberType) { self.mem = mem }
+
+    fn set_res(&mut self, res: u32) { self.tpm_result = res }
+}
+
+/* PTM_INIT */
+
+#[derive(Debug)]
+pub struct PtmInit {
+    pub mem: MemberType,
+    /* request */
+    pub init_flags: u32,
+    /* response */
+    pub tpm_result: PtmRes,
+}
+
+impl PtmInit {
+    pub fn new() -> Self {
+        Self {
+            mem: MemberType::Request,
+            init_flags: 0,
+            tpm_result: 0,
+        }
+    }
+}
+
+impl Ptm for PtmInit {
+    fn convert_to_reqbytes(&self) -> Vec<u8> {
+        let mut buf: Vec<u8> = Vec::<u8>::new();
+        buf.extend_from_slice(&self.init_flags.to_be_bytes());
         buf
     }
 
