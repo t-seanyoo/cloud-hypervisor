@@ -1398,6 +1398,7 @@ dependencies = [
  "byteorder",
  "filedescriptor",
  "libc",
+ "log",
  "nix",
  "tpm2",
  "virtio-devices",

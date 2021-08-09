@@ -12,3 +12,4 @@ tpm2 = { path = "../tpm2"}
 filedescriptor = "0.8.0"
 nix = "0.22.0"
 libc = "0.2.98"
+log = "0.4.14"

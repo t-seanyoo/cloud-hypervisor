@@ -1,7 +1,9 @@
 // Implementing struct in unions
 
+
 use byteorder::{BigEndian, ReadBytesExt}; // 1.2.7
 use std::convert::TryInto;
+use std::fmt;
 
 #[derive(Debug)]
 pub struct TPMReqHdr {
@@ -365,128 +367,129 @@ impl Ptm for PtmInit {
  * buffers above (ptm_hdata:u.req.data and ptm_get_state:u.resp.data
  * and ptm_set_state:u.req.data) are 0xffffffff.
  */
+#[derive(Debug)]
 pub enum Commands {
     CmdGetCapability = 1,
-    CmdInit,
-    CmdShutdown,
-    CmdGetTpmEstablished,
-    CmdSetLocality,
-    CmdHashStart,
-    CmdHashData,
-    CmdHashEnd,
-    CmdCancelTpmCmd,
-    CmdStoreVolatile,
-    CmdResetTpmEstablished,
-    CmdGetStateBlob,
-    CmdSetStateBlob,
-    CmdStop,
-    CmdGetConfig,
-    CmdSetDatafd,
-    CmdSetBufferSize,
+    CmdInit,                   // 2
+    CmdShutdown, // 3
+    CmdGetTpmEstablished, // 4
+    CmdSetLocality, // 5
+    CmdHashStart, // 6
+    CmdHashData, // 7
+    CmdHashEnd, // 8
+    CmdCancelTpmCmd, // 9
+    CmdStoreVolatile, // 10
+    CmdResetTpmEstablished, // 11
+    CmdGetStateBlob, // 12
+    CmdSetStateBlob, // 13
+    CmdStop, // 14
+    CmdGetConfig, // 15
+    CmdSetDatafd, // 16
+    CmdSetBufferSize, // 17
 }
 
 #[test]
 /** tpm_ioctl Testing */
 /* PtmRes */
 fn test_ptmres() {
-    println!("PtmRes Testing:");
+    debug!("PtmRes Testing:");
     let mut res: PtmRes = 144;
-    println!("PtmRes- original value: {}", res);
-    println!("PtmRes- convert_to_reqbytes: {:?}", res.convert_to_reqbytes());
+    debug!("PtmRes- original value: {}", res);
+    debug!("PtmRes- convert_to_reqbytes: {:?}", res.convert_to_reqbytes());
     assert_eq!(res.convert_to_reqbytes(), []);
-    println!("PtmRes- get_mem: {:?}", res.get_mem());
+    debug!("PtmRes- get_mem: {:?}", res.get_mem());
     assert_eq!(res.get_mem(), MemberType::Error);
     let buf: &[u8] = &[0,0,0,1,1,4];
     res.convert_to_ptm(&buf);
-    println!("PtmRes- convert_to_ptm: {:?}", res);
+    debug!("PtmRes- convert_to_ptm: {:?}", res);
 }
 
 /* PtmCap */
 fn test_ptmcap() {
-    println!("PtmCap Testing");
+    debug!("PtmCap Testing");
     let mut cap: PtmCap = 300;
-    println!("PtmCap- original value: {}", cap);
-    println!("PtmCap- convert_to_reqbytes: {:?}", cap.convert_to_reqbytes());
+    debug!("PtmCap- original value: {}", cap);
+    debug!("PtmCap- convert_to_reqbytes: {:?}", cap.convert_to_reqbytes());
     assert_eq!(cap.convert_to_reqbytes(), []);
-    println!("PtmCes- get_mem: {:?}", cap.get_mem());
+    debug!("PtmCes- get_mem: {:?}", cap.get_mem());
     assert_eq!(cap.get_mem(), MemberType::Cap);
     let buf: &[u8] = &[0,0,0,0,0,0,1,1,1,1];
     cap.convert_to_ptm(&buf);
-    println!("PtmRes- convert_to_ptm: {:?}", cap);
+    debug!("PtmRes- convert_to_ptm: {:?}", cap);
 }
 
 /* PtmEst Testing */
 fn test_ptmest() {
-    println!("PtmEst Testing");
+    debug!("PtmEst Testing");
     let mut est: PtmEst = PtmEst::new();
-    println!("PtmEst- original value: {:?}", est);
-    println!("PtmEst- convert_to_reqbytes: {:?}", est.convert_to_reqbytes());
+    debug!("PtmEst- original value: {:?}", est);
+    debug!("PtmEst- convert_to_reqbytes: {:?}", est.convert_to_reqbytes());
     assert_eq!(est.convert_to_reqbytes(), []);
-    println!("PtmEst- get_mem: {:?}", est.get_mem());
+    debug!("PtmEst- get_mem: {:?}", est.get_mem());
     assert_eq!(est.get_mem(), MemberType::Request);
     let buf: &[u8] = &[0,0,0,1,1,0,1,1,1,1];
     est.convert_to_ptm(&buf);
-    println!("PtmEst- convert_to_ptm: {:?}", est);
+    debug!("PtmEst- convert_to_ptm: {:?}", est);
     est.set_mem(MemberType::Error);
-    println!("PtmEst- set_mem to Error: {:?}", est.get_mem());
+    debug!("PtmEst- set_mem to Error: {:?}", est.get_mem());
     assert_eq!(est.get_mem(), MemberType::Error);
     est.set_res(13);
-    println!("PtmEst- set_res: {:?}", est);
+    debug!("PtmEst- set_res: {:?}", est);
 }
 
 /* PtmSetBufferSize Testing */
 fn test_ptmsetbuffersize() {
-    println!("PtmSetBufferSize Testing");
+    debug!("PtmSetBufferSize Testing");
     let mut psbs: PtmSetBufferSize = PtmSetBufferSize::new();
-    println!("PtmSetBufferSize- original value: {:?}", psbs);
+    debug!("PtmSetBufferSize- original value: {:?}", psbs);
     psbs.req.buffersize = 266;
-    println!("PtmSetBufferSize- convert_to_reqbytes: {:?}", psbs.convert_to_reqbytes());
-    println!("PtmSetBufferSize- get_mem: {:?}", psbs.get_mem());
+    debug!("PtmSetBufferSize- convert_to_reqbytes: {:?}", psbs.convert_to_reqbytes());
+    debug!("PtmSetBufferSize- get_mem: {:?}", psbs.get_mem());
     assert_eq!(psbs.get_mem(), MemberType::Request);
     let buf: &[u8] = &[0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,1];
     psbs.convert_to_ptm(&buf);
-    println!("PtmSetBufferSize- convert_to_ptm: {:?}", psbs);
+    debug!("PtmSetBufferSize- convert_to_ptm: {:?}", psbs);
     psbs.set_mem(MemberType::Error);
-    println!("PtmSetBufferSize- set_mem to Error: {:?}", psbs.get_mem());
+    debug!("PtmSetBufferSize- set_mem to Error: {:?}", psbs.get_mem());
     assert_eq!(psbs.get_mem(), MemberType::Error);
     psbs.set_res(13);
-    println!("PtmSetBufferSize- set_res to 13: {:?}", psbs);
+    debug!("PtmSetBufferSize- set_res to 13: {:?}", psbs);
 }
 /* PtmResetEst */
 fn test_ptmresetest() {
-    println!("PtmResetEst Testing");
+    debug!("PtmResetEst Testing");
     let mut pre: PtmResetEst = PtmResetEst::new();
-    println!("PtmResetEst- original value: {:?}", pre);
+    debug!("PtmResetEst- original value: {:?}", pre);
     pre.req.loc = 17;
-    println!("PtmResetEst- convert_to_reqbytes: {:?}", pre.convert_to_reqbytes());
-    println!("PtmResetEst- get_mem: {:?}", pre.get_mem());
+    debug!("PtmResetEst- convert_to_reqbytes: {:?}", pre.convert_to_reqbytes());
+    debug!("PtmResetEst- get_mem: {:?}", pre.get_mem());
     assert_eq!(pre.get_mem(), MemberType::Request);
     let buf: &[u8] = &[0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,1];
     pre.convert_to_ptm(&buf);
-    println!("PtmResetEst- convert_to_ptm: {:?}", pre);
+    debug!("PtmResetEst- convert_to_ptm: {:?}", pre);
     pre.set_mem(MemberType::Error);
-    println!("PtmResetEst- set_mem to Error: {:?}", pre.get_mem());
+    debug!("PtmResetEst- set_mem to Error: {:?}", pre.get_mem());
     assert_eq!(pre.get_mem(), MemberType::Error);
     pre.set_res(13);
-    println!("PtmResetEst- set_res to 13: {:?}", pre);
+    debug!("PtmResetEst- set_res to 13: {:?}", pre);
 }
 
 /* PtmLoc Testing */
 fn test_ptmloc() {
-    println!("PtmLoc Testing");
+    debug!("PtmLoc Testing");
     let mut loc: PtmLoc = PtmLoc::new();
-    println!("PtmLoc- original value: {:?}", loc);
+    debug!("PtmLoc- original value: {:?}", loc);
     loc.req.loc = 17;
-    println!("Set loc to 17");
-    println!("PtmLoc- convert_to_reqbytes: {:?}", loc.convert_to_reqbytes());
-    println!("PtmLoc- get_mem: {:?}", loc.get_mem());
+    debug!("Set loc to 17");
+    debug!("PtmLoc- convert_to_reqbytes: {:?}", loc.convert_to_reqbytes());
+    debug!("PtmLoc- get_mem: {:?}", loc.get_mem());
     assert_eq!(loc.get_mem(), MemberType::Request);
     let buf: &[u8] = &[0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,1];
     loc.convert_to_ptm(&buf);
-    println!("PtmLoc- convert_to_ptm: {:?}", loc);
+    debug!("PtmLoc- convert_to_ptm: {:?}", loc);
     loc.set_mem(MemberType::Error);
-    println!("PtmLoc- set_mem to Error: {:?}", loc.get_mem());
+    debug!("PtmLoc- set_mem to Error: {:?}", loc.get_mem());
     assert_eq!(loc.get_mem(), MemberType::Error);
     loc.set_res(13);
-    println!("PtmLoc- set_res to 13: {:?}", loc);
+    debug!("PtmLoc- set_res to 13: {:?}", loc);
 }
