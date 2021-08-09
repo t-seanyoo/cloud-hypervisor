@@ -1606,7 +1606,7 @@ impl DeviceManager {
         // Must Create VTPM Device...
         let vtpm = Arc::new(Mutex::new(devices::tpm_tis::TPMIsa::new(
             interrupt_group,
-            irq_num,
+            irq_num as InterruptIndex,
         )));
 
         // Add VTPM Device to mmio
