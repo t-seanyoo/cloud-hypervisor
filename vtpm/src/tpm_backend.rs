@@ -104,7 +104,6 @@ pub struct TPMEmulator {
     caps: PtmCap, /* capabilities of the TPM */
     ctrl_chr: CharBackend,
     data_ioc: RawFd,
-    // tpm: TPMDevice,
     cur_locty_number: u8, /* last set locality */
     mutex: Arc<Mutex<usize>>,
     established_flag_cached: u8,
@@ -267,7 +266,7 @@ impl TPMEmulator {
         // let mut input_buf; //Create command buf
 
         /* Lock object for scope */
-        let guard = self.mutex.lock().unwrap();
+        // let guard = self.mutex.lock().unwrap();
         {
             let mut buf = Vec::<u8>::with_capacity(n as usize);
             buf.extend(cmd_no);
@@ -276,7 +275,8 @@ impl TPMEmulator {
 
             let mut res = self.ctrl_chr.chr_fe_write_all(&mut buf, n as usize);
             if res <= 0 {
-                std::mem::drop(guard);
+                // std::mem::drop(guard);
+                debug!("Write failed res: {}", res);
                 return -1;
             }
 
@@ -287,17 +287,20 @@ impl TPMEmulator {
             let mut output = [0 as u8; TPM_TIS_BUFFER_MAX];
 
             if msg_len_out != 0 {
+                debug!("MSG_LEN_OUT != 0");
                 res = self.ctrl_chr.chr_fe_read_all(&mut output, msg_len_out);
+                debug!("Made it past read all");
                 if res <= 0 {
-                    std::mem::drop(guard);
+                    // std::mem::drop(guard);
                     return -1;
                 }
                 msg.convert_to_ptm(&output);
             } else {
                 msg.set_mem(MemberType::Response);
             }
+            debug!("Success: {:?}", output);
         }
-        std::mem::drop(guard);
+        // std::mem::drop(guard);
         0
     }
 
@@ -491,6 +494,7 @@ impl TPMEmulator {
     }
 
     pub fn set_locality(&mut self) -> isize {
+        debug!("Set Locality");
         let mut loc: PtmLoc = PtmLoc::new();
         let cmd = match self.cmd.clone() {
             None => return -1,
@@ -502,12 +506,15 @@ impl TPMEmulator {
         }
 
         loc.req.loc = cmd.locty;
-
-        if self.tpm_emulator_ctrlcmd(Commands::CmdSetLocality, &mut loc, mem::size_of::<u32>(), mem::size_of::<u32>()) < 0 {
-            // error_setg(errp, "tpm-emulator: could not set locality : %s",
-            //    strerror(errno));
-            return -1
-        }
+        let i = self.tpm_emulator_ctrlcmd(Commands::CmdSetLocality, &mut loc, mem::size_of::<u32>(), 0);
+        // if  < 0 {
+        //     // error_setg(errp, "tpm-emulator: could not set locality : %s",
+        //     //    strerror(errno));
+        //     debug!("ERROR SENDING SET LOCALITY");
+        //     panic!("ERROR SENDING SET LOCALITY");
+        //     return -1
+        // }
+        debug!("Successful SEnd Set Locality");
 
         loc.tpm_result = u32::from_be(loc.tpm_result);
         if loc.tpm_result != 0 {
@@ -530,6 +537,7 @@ impl TPMEmulator {
 
 
     pub fn handle_request(&mut self) -> isize {
+        debug!("Handle Request");
         if self.cmd.is_some() {
             if self.set_locality() < 0 || self.unix_tx_bufs() < 0 {
                 return -1
@@ -540,6 +548,7 @@ impl TPMEmulator {
     }
 
     pub fn worker_thread(&mut self) -> isize {
+        debug!("Worker Thread");
         let err = self.handle_request();
         if err < 0 {
             // error_report_err(err);
@@ -551,7 +560,9 @@ impl TPMEmulator {
 
     pub fn deliver_request(&mut self, cmd: &mut TPMBackendCmd) -> isize {
         //tpm_backend_deliver_request
+        debug!("Deliver Request Backend");
         if self.cmd.is_none() {
+            debug!("Valid Command");
             self.cmd = Some(cmd.clone());
 
             return self.worker_thread()

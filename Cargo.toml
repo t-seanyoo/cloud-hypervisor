@@ -79,8 +79,6 @@ members = [
     "pci",
     "qcow",
     "rate_limiter",
-    "tpm2",
-    "tpm2-sys",
     "vhost_user_backend",
     "vhost_user_block",
     "vhost_user_net",

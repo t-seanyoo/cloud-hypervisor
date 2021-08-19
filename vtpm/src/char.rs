@@ -11,7 +11,7 @@ use std::io::prelude::*;
 use std::io::Write;
 use std::os::unix::io::{RawFd, AsRawFd};
 use nix::unistd::{read, write};
-use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag, sendmsg, recvfrom, ControlMessage, MsgFlags };
+use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag, recv, sendmsg, recvfrom, ControlMessage, MsgFlags };
 use nix::sys::uio::IoVec;
 use libc;
 
@@ -113,7 +113,9 @@ impl SocketCharDev {
             return 0
         }
         //SET BLOCKING
-        let (size, _) = recvfrom(self.ctrl_fd, buf).expect("char.rs: sync_read recvmsg error");
+        debug!("sync read state connected");
+        let size = recv(self.ctrl_fd, buf, MsgFlags::empty()).expect("char.rs: sync_read recvmsg error");
+        debug!("success recv");
         size as isize
     }
 
@@ -122,18 +124,21 @@ impl SocketCharDev {
         let write_fd = self.write_msgfd;
         let write_vec = &[write_fd];
         let cmsgs = &[ControlMessage::ScmRights(write_vec)];
+        debug!("send full message");
 
         sendmsg(self.ctrl_fd, iov, cmsgs, MsgFlags::empty(), None).expect("char.rs: ERROR ON send_full sendmsg") as isize
     }
 
     pub fn chr_write(&mut self, buf: &mut [u8], len:usize) -> isize {
         let mut res = 0;
+        debug!("CHR_WRITE HAPPENED");
 
         if let Some(ref mut sock) = self.stream {
-            let guard = self.chr_write_lock.lock().unwrap();
+            // let guard = self.chr_write_lock.lock().unwrap();
             {
                 res = match self.state {
                     ChardevState::ChardevStateConnected => {
+                        debug!("State Connected");
                         let ret = self.send_full(buf, len);
                         /* free the written msgfds in any cases
                         * other than ret < 0 */
@@ -153,7 +158,8 @@ impl SocketCharDev {
                     _ => -1,
                 };
             }
-            std::mem::drop(guard);
+            debug!("WRITE SUCCESS");
+            // std::mem::drop(guard);
 
             res
         } else {
@@ -251,7 +257,10 @@ impl CharBackend {
      */
     pub fn chr_fe_read_all(&mut self, mut buf: &mut [u8], len: usize) -> isize {
         if let Some(ref mut dev) = self.chr {
-            dev.chr_sync_read(&mut buf, len)
+            debug!("Made it to sync");
+            let (s,_) = recvfrom(dev.ctrl_fd, &mut buf).expect("char.rs: sync_read recvmsg error");
+            s as isize
+            // dev.chr_sync_read(&mut buf, len)
         } else {
             -1
         }

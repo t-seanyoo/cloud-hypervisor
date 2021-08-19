@@ -29,7 +29,6 @@ const TPM_TIS_ACCESS_SEIZE: u8 = 1 << 3;
 const TPM_TIS_ACCESS_PENDING_REQUEST: u32 = 1 << 2;
 const TPM_TIS_CAPABILITIES_SUPPORTED2_0: u32 = (1 << 4) | (0 << 8) | (3 << 9) | (3 << 28) | ((1 << 2) | (1 << 0) | (1 << 1) | (1 << 7));
 const TPM_TIS_STS_DATA_AVAILABLE: u32 = 1 << 4;
-const TPM_TIS_BURST_COUNT_SHIFT: u32 = 8;
 const TPM_TIS_NO_DATA_BYTE: u32 = 0xff;
 const TPM_TIS_TPM_DID: u32 = 0x0001;
 const TPM_TIS_TPM_VID: u32 = 0x1014;
@@ -47,7 +46,6 @@ const TPM_TIS_STS_SELFTEST_DONE: u32 = 1 << 2;
 const TPM_TIS_STS_TPM_FAMILY_MASK: u32 = 0x3 << 26;
 const TPM_TIS_STS_COMMAND_READY: u32 = 1 << 6;
 const TPM_TIS_INT_DATA_AVAILABLE: u32 = 1 << 0;
-
 const TPM_TIS_INT_LOCALITY_CHANGED: u32 = 1 << 2;
 const TPM_TIS_INT_COMMAND_READY: u32 = 1 << 7;
 const TPM_TIS_STS_COMMAND_CANCEL: u32 = 1 << 24;
@@ -169,8 +167,6 @@ pub struct TPMIsa {
     be_driver: TPMBackend, 
     be_tpm_version: TPMVersion,
     count: usize,
-    // TPM PPI Object
-    // PPI Enabled Bool
     irq_num: InterruptIndex,
     irq: Arc<Box<dyn InterruptSourceGroup>>,
     // out: Option<Box<dyn io::Write + Send>>,
@@ -203,9 +199,10 @@ impl TPMIsa {
         if be_driver.startup_tpm(be_buffer_size) < 0 {
             // Handle Backend failed to startup
         }
+        debug!("IRQ: {}", irq_num);
 
         Self {
-            buffer: Vec::<u8>::new(), //IMPLEMENT
+            buffer: Vec::<u8>::with_capacity(4096), //IMPLEMENT
             rw_offset: 0,
             active_locty: TPM_TIS_NO_LOCALITY,
             aborting_locty: TPM_TIS_NO_LOCALITY,
@@ -354,12 +351,10 @@ impl TPMIsa {
     }
 
     fn tpm_backend_get_tpm_established_flag(&mut self) -> bool {
-        // k->get_tpm_established_flag ? k->get_tpm_established_flag(s) : false;
         self.be_driver.get_tpm_established_flag()
     }
 
     fn tpm_backend_reset_tpm_established_flag(&mut self, locty: u8) -> isize {
-        // k->reset_tpm_established_flag ? k->reset_tpm_established_flag(s, locty) : 0;
         self.be_driver.reset_tpm_established_flag(locty)
     }
 
@@ -393,7 +388,7 @@ impl TPMIsa {
                     self.tpm_tis_abort();
                 }
     
-                self.tpm_tis_raise_irq(locty, TPM_TIS_INT_DATA_AVAILABLE | TPM_TIS_INT_STS_VALID);
+                // self.tpm_tis_raise_irq(locty, TPM_TIS_INT_DATA_AVAILABLE | TPM_TIS_INT_STS_VALID);
             }
         }
     }
@@ -657,7 +652,7 @@ impl TPMIsa {
                                 self.tpm_tis_raise_irq(locty, TPM_TIS_INT_COMMAND_READY);
                                 debug!("Status Command Updated: {:?}", self.locs[locty as usize].state);
                             }
-                            TPMTISState::TpmTisStateExecution => {},
+                            TPMTISState::TpmTisStateExecution => self.tpm_tis_prep_abort(locty, locty),
                             TPMTISState::TpmTisStateReception => self.tpm_tis_prep_abort(locty, locty),
                             TPMTISState::TpmTisStateCompletion => {
                                 self.rw_offset = 0;
@@ -675,6 +670,7 @@ impl TPMIsa {
                             TPMTISState::TpmTisStateReception => {
                                 if (self.locs[locty as usize].sts & TPM_TIS_STS_EXPECT) == 0 {
                                     self.tpm_tis_tpm_send(locty);
+                                    self.tpm_tis_sts_set(locty, TPM_TIS_STS_VALID|TPM_TIS_STS_DATA_AVAILABLE);
                                 }
                             }
                             _ => {},
@@ -692,7 +688,52 @@ impl TPMIsa {
                     }
                 }
             },
-            TPM_TIS_REG_DATA_FIFO => {},
+            TPM_TIS_REG_DATA_FIFO => /* data fifo */ {
+            if self.active_locty == locty {
+                if self.locs[locty as usize].state == TPMTISState::TpmTisStateIdle || self.locs[locty as usize].state == TPMTISState::TpmTisStateExecution || self.locs[locty as usize].state == TPMTISState::TpmTisStateCompletion {
+                    /* drop the byte */
+                } else {
+                    if self.locs[locty as usize].state == TPMTISState::TpmTisStateReady {
+                        self.locs[locty as usize].state = TPMTISState::TpmTisStateReception;
+                        self.tpm_tis_sts_set(locty, TPM_TIS_STS_EXPECT | TPM_TIS_STS_VALID);
+                    }
+
+                    val >>= shift as u32;
+                    if size > 4 - (addr & 0x3) as usize {
+                        /* prevent access beyond FIFO */
+                        size = 4 - (addr & 0x3) as usize;
+                    }
+                    while (self.locs[locty as usize].sts & TPM_TIS_STS_EXPECT) != 0 && size > 0 {
+                        if self.rw_offset < self.be_buffer_size as u16 {
+                            self.buffer.push(val as u8);
+                            // self.buffer[self.rw_offset as usize] = val as u8;
+                            self.rw_offset += 1;
+                            val >>= 8;
+                            size -= 1;
+                        } else {
+                            self.tpm_tis_sts_set(locty, TPM_TIS_STS_VALID);
+                        }
+                    }
+                    /* check for complete packet */
+                    if self.rw_offset > 5 && (self.locs[locty as usize].sts & TPM_TIS_STS_EXPECT != 0) {
+                        debug!("Check for complete pack");
+                        /* we have a packet length - see if we have all of it */
+                        let need_irq: bool = !(self.locs[locty as usize].sts & TPM_TIS_STS_VALID) != 0;
+
+                        let len = self.tpm_cmd_get_size(); //IMPLEMENT
+                        if len > self.rw_offset as u32 {
+                            self.tpm_tis_sts_set(locty, TPM_TIS_STS_EXPECT | TPM_TIS_STS_VALID);
+                        } else {
+                            /* packet complete */
+                            self.tpm_tis_sts_set(locty, TPM_TIS_STS_VALID);
+                        }
+                        if need_irq {
+                            self.tpm_tis_raise_irq(locty, TPM_TIS_INT_STS_VALID); //IMPLMEMENT
+                        }
+                    }
+                }
+            }  
+        },
             TPM_TIS_REG_DATA_XFIFO ..= TPM_TIS_REG_DATA_XFIFO_END => {
                 /* data fifo */
                 if self.active_locty == locty {
@@ -711,7 +752,8 @@ impl TPMIsa {
                         }
                         while (self.locs[locty as usize].sts & TPM_TIS_STS_EXPECT) != 0 && size > 0 {
                             if self.rw_offset < self.be_buffer_size as u16 {
-                                self.buffer[self.rw_offset as usize] = val as u8;
+                                self.buffer.push(val as u8);
+                                // self.buffer[self.rw_offset as usize] = val as u8;
                                 self.rw_offset += 1;
                                 val >>= 8;
                                 size -= 1;
@@ -823,7 +865,29 @@ impl BusDevice for TPMIsa {
                     }
                 }
             },
-            TPM_TIS_REG_DATA_FIFO => {},
+            TPM_TIS_REG_DATA_FIFO => {
+                debug!("XFIFO Region Read");
+                if self.active_locty == locty {
+                    if size > (4 - (addr & 0x3)) as usize {
+                        /* prevent access beyond FIFO */
+                        size = (4 - (addr & 0x3)) as usize;
+                    }
+                    val = 0;
+                    shift = 0;
+                    while size > 0 {
+                        match self.locs[locty as usize].state {
+                            TPMTISState::TpmTisStateCompletion => v = self.tpm_tis_data_read(locty),
+                            _ => {
+                                v = TPM_TIS_NO_DATA_BYTE as u8;
+                            }
+                        }
+                        val |= (v << shift) as u32;
+                        shift += 8;
+                        size-=1;
+                    }
+                    shift = 0; /* no more adjustments */
+                }
+            },
             TPM_TIS_REG_DATA_XFIFO ..= TPM_TIS_REG_DATA_XFIFO_END => {
                 debug!("XFIFO Region Read");
                 if self.active_locty == locty {
@@ -860,9 +924,9 @@ impl BusDevice for TPMIsa {
             val >>= shift;
         }
 
-        if self.count >15 {
-            error!("15 unavailables reached");
-        }
+        // if self.count >30 {
+        //     panic!("30 unavailables reached");
+        // }
 
         if read_ok && data.len() <= 4 {
             for (byte, read) in data.iter_mut().zip(<u32>::to_le_bytes(val).iter().cloned()) {
